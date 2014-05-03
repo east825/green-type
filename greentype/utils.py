@@ -8,7 +8,9 @@ INDENT_SIZE = 2
 
 def main(path):
     with open(path) as f:
-        print(dump_ast(ast.parse(f.read(), path)))
+        root_node = ast.parse(f.read(), path)
+        # print(ast.dump(root_node, include_attributes=True))
+        print(dump_ast(root_node))
         # visitor = DumpVisitor()
         # visitor.visit(ast.parse(f.read(), path))
         # visitor.dump()
@@ -31,21 +33,22 @@ def is_collection(x):
 
 
 def dump_ast(node, indent=0):
-    first_line = ' ' * indent + format_node(node)
-    child_lines = []
-    for name, value in ast.iter_fields(node):
-        child_indent = ' ' * (indent + INDENT_SIZE)
-        if isinstance(value, ast.AST):
-            field_fmt = dump_ast(value, indent + INDENT_SIZE)
-            child_lines.append('{}{}: {}'.format(child_indent, name, field_fmt.lstrip()))
-        elif is_collection(value):
-            child_lines.append('{}{}: *'.format(child_indent, name))
-            child_lines.extend(dump_ast(c, indent + INDENT_SIZE * 2) for c in value)
-        else:
-            child_lines.append('{}{}: {!r}'.format(child_indent, name, value))
-    if child_lines:
-        return first_line + '\n' + '\n'.join(child_lines)
-    return first_line
+    if isinstance(node, ast.AST):
+        first_line = ' ' * indent + format_node(node)
+        child_lines = []
+        for name, value in ast.iter_fields(node):
+            child_indent = ' ' * (indent + INDENT_SIZE)
+            if is_collection(value):
+                child_lines.append('{}{}: *'.format(child_indent, name))
+                child_lines.extend(dump_ast(c, indent + INDENT_SIZE * 2) for c in value)
+            else:
+                field_fmt = dump_ast(value, indent + INDENT_SIZE)
+                child_lines.append('{}{}: {}'.format(child_indent, name, field_fmt.lstrip()))
+        if child_lines:
+            return first_line + '\n' + '\n'.join(child_lines)
+        return first_line
+    else:
+        return '{}{!r}'.format(' ' * indent, node)
 
 
 class DumpVisitor(ast.NodeVisitor):
