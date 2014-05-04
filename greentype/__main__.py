@@ -1,10 +1,30 @@
-from collections import defaultdict
 import ast
 import os
+import logging
+import argparse
 import sys
 
+import greentype.nodes as nodes
+from greentype.utils import path_to_name, is_python_source_module
 
-class FunctionVisitor(ast.NodeVisitor):
+
+logging.basicConfig(level=logging.DEBUG)
+
+LOG = logging.getLogger(__name__)
+
+# TODO: get rid of global state
+_classes = {}
+_modules = {}
+_src_roots = []
+
+
+class _ModuleVisitor(ast.NodeVisitor):
+    def __init__(self, module_path):
+        super().__init__()
+        self.module_path = module_path
+
+
+class _FunctionVisitor(_ModuleVisitor):
     def visit_FunctionDef(self, func_node):
         param_names = []
         param_names.extend(a.arg for a in func_node.args.args)
@@ -19,7 +39,7 @@ class FunctionVisitor(ast.NodeVisitor):
                 target, expr = assignment_node.targets[0], assignment_node.value
                 # collect usages before assignment
                 self.visit(expr)
-                # skip packing/unpacking for now
+                # TODO: find out when targets in AST is actually not a single element list
                 if isinstance(expr, (ast.List, ast.Tuple)) and isinstance(target, (ast.List, ast.Tuple)) \
                         and len(target.elts) == len(expr.elts):
                     for target, expr in zip(target.elts, expr.elts):
@@ -63,16 +83,106 @@ class FunctionVisitor(ast.NodeVisitor):
             Collector().visit(stmt)
 
         param_types = []
-        for name, in param_names:
-            param_types.append('{}::{{{}}}'.format(name, ', '.join(param_attributes[name])))
-        print('{}({})'.format(func_node.name, ', '.join(param_types)))
+        for name in param_names:
+            param_types.append('{} :: {{{}}}'.format(name, ', '.join(param_attributes[name])))
+        LOG.debug('{}({})'.format(func_node.name, ', '.join(param_types)))
+
+
+class _ClassVisitor(_ModuleVisitor):
+    def visit_ClassDef(self, class_node):
+        bases_names = []
+        for expr in class_node.bases:
+            parts = []
+            while True:
+                if isinstance(expr, ast.Name):
+                    parts.append(expr.id)
+                    break
+                elif isinstance(expr, ast.Attribute):
+                    parts.append(expr.attr)
+                    expr = expr.value
+                else:
+                    LOG.warning('Class {} in module {} uses computed bases. Not supported.')
+                    break
+            if parts:
+                bases_names.append('.'.join(reversed(parts)))
+
+        attrs = []
+        # TODO: collect attributes in constructor and other methods
+        class ClassAttributeVisitor(ast.NodeVisitor):
+            def visit_FunctionDef(self, func_node):
+                attrs.append(func_node.name)
+
+            def visit_Assign(self, assign_node):
+                target = assign_node.targets[0]
+                if isinstance(target, ast.Name):
+                    attrs.append(target.id)
+
+        for stmt in class_node.body:
+            ClassAttributeVisitor().visit(stmt)
+
+        global _classes
+        qname = '{}.{}'.format(path_to_name(self.module_path), class_node.name)
+        class_def = nodes.ClassDefinitionNode(qname, bases_names, attrs)
+        _classes[qname] = class_def
+
+
+def analyze_module(path):
+    LOG.info('Analyzing {!r}'.format(path))
+    with open(path) as f:
+        root_node = ast.parse(f.read())
+        _ClassVisitor(path).visit(root_node)
+        _FunctionVisitor(path).visit(root_node)
+
+
+
+def analyze(path):
+    if os.path.isfile(path):
+        if not is_python_source_module(path):
+            raise ValueError('Not a Python module {!r} (should end with .py).'.format(path))
+        analyze_module(path)
+    elif os.path.isdir(path):
+        for dirpath, dirnames, filenames in os.walk(path):
+            for name in dirnames:
+                abs_path = os.path.abspath(os.path.join(dirpath, name))
+                if not os.path.exists(os.path.join(abs_path, '__init__.py')):
+                    # ignore namespace packages for now
+                    LOG.debug('Not a package: {!r}. Skipping.'.format())
+                    dirnames.remove(name)
+            for name in filenames:
+                abs_path = os.path.abspath(os.path.join(dirpath, name))
+                if not is_python_source_module(abs_path):
+                    continue
+                analyze_module(abs_path)
+
+    if LOG.isEnabledFor(logging.DEBUG):
+        LOG.debug('Classes found:\n' + '\n'.join(map(str, _classes.values())))
 
 
 def main():
-    file_path = os.path.abspath(sys.argv[1])
-    with open(file_path) as f:
-        root_node = ast.parse(f.read(), file_path)
-        FunctionVisitor().visit(root_node)
+    sys.modules['greentype.__main__'] = sys.modules[__name__]
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--src-roots',
+                        help='Sources roots separated by colon. Used to resolve module names in project.')
+    parser.add_argument('path', help='Path to single Python module or directory.')
+    args = parser.parse_args()
+
+    try:
+        target_path = os.path.abspath(args.path)
+
+        global _src_roots
+        if not args.src_roots:
+            if os.path.isfile(target_path):
+                _src_roots = [os.path.dirname(target_path)]
+            elif os.path.isdir(target_path):
+                _src_roots = [target_path]
+            else:
+                raise ValueError('Unrecognized target {!r}. Should be either file or directory.')
+        else:
+            _src_roots = args.src_roots.split(':')
+        analyze(target_path)
+    except Exception as e:
+        LOG.exception(e)
 
 
 if __name__ == '__main__':

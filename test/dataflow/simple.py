@@ -25,3 +25,10 @@ def func3(x, y):
     y = t
     x.foo()
     y.bar
+
+class A(B):
+    CONST = 42
+
+    def foo(self):
+        pass
+

@@ -1,19 +1,10 @@
 from collections.abc import Iterable
 import ast
+import os
 import sys
 import collections
 
 INDENT_SIZE = 2
-
-
-def main(path):
-    with open(path) as f:
-        root_node = ast.parse(f.read(), path)
-        # print(ast.dump(root_node, include_attributes=True))
-        print(dump_ast(root_node))
-        # visitor = DumpVisitor()
-        # visitor.visit(ast.parse(f.read(), path))
-        # visitor.dump()
 
 
 def format_node(node, include_fields=False):
@@ -69,6 +60,36 @@ class DumpVisitor(ast.NodeVisitor):
 
     def dumps(self):
         return '\n'.join(self.lines)
+
+
+def path_to_name(path):
+    from greentype.__main__ import _src_roots
+    path = os.path.abspath(path)
+    for src_root in _src_roots + sys.path:
+        if path.startswith(src_root):
+            relative = os.path.relpath(path, src_root)
+            transformed, _ = os.path.splitext(relative)
+            dir_name, base_name = os.path.split(transformed)
+            if base_name == '__init__':
+                transformed = dir_name
+            return transformed.replace(os.path.sep, '.').strip('.')
+    raise ValueError('Unresolved module {!r}'.format(path))
+
+
+def is_python_source_module(path):
+    _, ext = os.path.splitext(path)
+    # importlib.machinery.SOURCE_SUFFIXES?
+    return os.path.isfile(path) and ext == '.py'
+
+
+def main(path):
+    with open(path) as f:
+        root_node = ast.parse(f.read(), path)
+        # print(ast.dump(root_node, include_attributes=True))
+        print(dump_ast(root_node))
+        # visitor = DumpVisitor()
+        # visitor.visit(ast.parse(f.read(), path))
+        # visitor.dump()
 
 
 if __name__ == '__main__':
