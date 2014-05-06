@@ -61,6 +61,28 @@ class DumpVisitor(ast.NodeVisitor):
     def dumps(self):
         return '\n'.join(self.lines)
 
+def camel_to_snake(s):
+    """Translate CamelCase identifier to snake_case.
+
+    If identifier is already in snake case it will be returned unchanged,
+    except that leading and trailing underscores will be stripped.
+    """
+    words = []
+    word = []
+    prev_upper = False
+    for c in s:
+        if ((c.isupper() and not prev_upper) or not c.isalnum()) and word:
+            words.append(''.join(word))
+            word = []
+        if c.isalnum():
+            word.append(c.lower())
+            prev_upper = c.isupper()
+    if word:
+        words.append(''.join(word))
+    return '_'.join(words)
+
+
+
 
 def path_to_name(path):
     from greentype.__main__ import _src_roots

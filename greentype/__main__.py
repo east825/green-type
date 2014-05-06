@@ -24,6 +24,45 @@ class _ModuleVisitor(ast.NodeVisitor):
         self.module_path = module_path
 
 
+class _AttributesCollector(ast.NodeVisitor):
+    """Collect accessed attributes for specified qualifier."""
+
+    def __init__(self, name, read_only=True):
+        super().__init__()
+        self.name = name
+        self.attributes = []
+        self.read_only = read_only
+
+    def collect(self, node):
+        self.attributes = []
+        self.visit(node)
+        return self.attributes
+
+
+class _SimpleAttributesCollector(_AttributesCollector):
+    """Collect only immediately accessed attributes for qualifier.
+
+    No alias or scope analysis is used. Operators and other special methods
+    are considered, hover subscriptions are.
+    """
+
+    def visit_Attribute(self, node):
+        if isinstance(node.expr, ast.Name) and node.expr.id == self.name:
+            if not self.read_only or node.ctx == ast.Load:
+                self.attributes.append(node.attr)
+
+
+    def visit_Subscript(self, node):
+        if isinstance(node.value, ast.Name) and node.value.id == self.name:
+            if isinstance(node.ctx, ast.Load):
+                self.attributes.append('__getitem__')
+            elif not self.read_only:
+                if isinstance(node.ctx, ast.Store):
+                    self.attributes.append('__setitem__')
+                elif isinstance(node.ctx, ast.Del):
+                    self.attributes.append('__delitem__')
+
+
 class _FunctionVisitor(_ModuleVisitor):
     def visit_FunctionDef(self, func_node):
         param_names = []
@@ -132,7 +171,6 @@ def analyze_module(path):
         root_node = ast.parse(f.read())
         _ClassVisitor(path).visit(root_node)
         _FunctionVisitor(path).visit(root_node)
-
 
 
 def analyze(path):
