@@ -1,5 +1,6 @@
 from collections.abc import Iterable
 import ast
+import logging
 import os
 import sys
 import collections
@@ -61,6 +62,7 @@ class DumpVisitor(ast.NodeVisitor):
     def dumps(self):
         return '\n'.join(self.lines)
 
+
 def camel_to_snake(s):
     """Translate CamelCase identifier to snake_case.
 
@@ -82,10 +84,9 @@ def camel_to_snake(s):
     return '_'.join(words)
 
 
-
-
-def path_to_name(path):
+def module_path_to_name(path):
     from greentype.__main__ import _src_roots
+
     path = os.path.abspath(path)
     for src_root in _src_roots + sys.path:
         if path.startswith(src_root):
@@ -102,6 +103,7 @@ def is_python_source_module(path):
     _, ext = os.path.splitext(path)
     # importlib.machinery.SOURCE_SUFFIXES?
     return os.path.isfile(path) and ext == '.py'
+
 
 
 def main(path):
