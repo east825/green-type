@@ -1,11 +1,14 @@
 import ast
 from collections import defaultdict
+import functools
+import operator
 import os
 import logging
 import argparse
 import sys
 import heapq
 import itertools
+import time
 
 from greentype import ast_utils
 from greentype import utils
@@ -44,6 +47,20 @@ class Definition:
         parts = self.qname.rsplit('.', maxsplit=1)
         return parts[1] if len(parts) > 0 else parts[0]
 
+    def __str__(self):
+        return '{}({})'.format(type(self).__name__, self.qname)
+
+    def __repr__(self):
+        return str(self)
+
+    def __eq__(self, other):
+        return isinstance(other, Definition) and self.qname == other.qname
+
+    def __ne__(self, other):
+        return not (self == other)
+
+    def __hash__(self):
+        return hash(self.qname)
 
 
 class ClassDefinition(Definition):
@@ -93,6 +110,7 @@ class ModuleVisitor(ast.NodeVisitor):
         if self.module_name:
             name = self.module_name + '.' + name
         return name
+
 
 class StructuralType:
     def __init__(self, attributes):
@@ -195,8 +213,10 @@ class ClassVisitor(ModuleVisitor):
                     self.attributes.add(target.id)
 
         class_attributes = ClassAttributeCollector().collect(node)
-
-        _classes_index[class_name] = ClassDefinition(class_name, node, bases_names, class_attributes)
+        definition = ClassDefinition(class_name, node, bases_names, class_attributes)
+        for attribute in class_attributes:
+            _class_attributes[attribute].add(definition)
+        _classes_index[class_name] = definition
 
 
 def analyze_module(path):
@@ -228,8 +248,10 @@ def analyze(path):
                 analyze_module(abs_path)
 
     if LOG.isEnabledFor(logging.INFO):
-        LOG.info('Total: %d classes, %d functions', len(_classes_index), len(_functions_index))
-        def find_most_busy_param(n, exclude_self):
+        LOG.info('Total: %d classes, %d functions, %d class attributes',
+                 len(_classes_index), len(_functions_index), len(_class_attributes))
+
+        def most_busy_parameters(n, exclude_self):
             if exclude_self:
                 params = itertools.chain.from_iterable(func.unbound_parameters for func in _functions_index.values())
             else:
@@ -238,16 +260,39 @@ def analyze(path):
             most_used = heapq.nlargest(n, params, key=lambda x: len(x.attributes))
             lines = []
             for p in most_used:
-                lines.append('{}#{}: {} times'.format(p.function.qname, p.name, len(p.attributes)))
-            LOG.info('Most frequently used parameters (%d):\n  %s', n, '\n  '.join(lines))
+                lines.append('{}#{}: {} attributes'.format(p.function.qname, p.name, len(p.attributes)))
+            log_items(lines, 'Most frequently accessed parameters (top %d):', n)
 
             # LOG.info('Maximum referenced attributes %d: param %r, function %r',
-            #          len(max_param.attributes), max_param.name, max_func.qualified_name)
+            # len(max_param.attributes), max_param.name, max_func.qualified_name)
 
-        find_most_busy_param(20, exclude_self=True)
+        most_busy_parameters(20, exclude_self=True)
         # find_most_busy_param(10, exclude_self=False)
-    LOG.debug('Functions:\n%s\n', '\n'.join(_functions_index))
-    LOG.debug('Classes:\n%s\n', '\n'.join(_classes_index))
+    start_time = time.process_time()
+    LOG.debug('Started inferring parameter types')
+    for func in _functions_index.values():
+        for param in func.parameters:
+            structural_type = StructuralType(param.attributes)
+            classes = suggest_classes(structural_type)
+            LOG.info('  %s#%s: %s', func.qname, param.name, classes)
+    LOG.debug('Stopped inferring: %fs spent\n', time.process_time() - start_time)
+    log_items(_functions_index, 'Functions:')
+    log_items(_classes_index, 'Classes:')
+
+
+def suggest_classes(structural_type):
+    base_classes = {attr: _class_attributes[attr] for attr in structural_type.attributes}
+    if not base_classes:
+        return None
+    suitable = functools.reduce(set.intersection, base_classes.values())
+    return suitable
+
+
+def log_items(items, header, *args, level=logging.DEBUG):
+    LOG.log(level, '{}'.format(header), *args)
+    for item in items:
+        LOG.log(level, '  %s', item)
+    LOG.log(level, '')
 
 
 def main():

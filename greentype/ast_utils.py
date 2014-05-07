@@ -17,6 +17,10 @@ def attributes_chain_to_name(node):
 def node_name(node):
     return getattr(node, 'id', None) or getattr(node, 'name', None)
 
+def node_parent(node):
+    parent = getattr(node, '_parent', None)
+    return parent() if parent is not None else None
+
 
 def interlink_ast(root):
     parents_stack = []
@@ -25,11 +29,14 @@ def interlink_ast(root):
         if isinstance(node, ast.AST):
             if parents_stack:
                 # TODO: may be better to use weakref here
-                # node.parent = weakref.ref(parents_stack[-1])
+                node._parent = weakref.ref(parents_stack[-1])
+                # property can't be defined outside of class, because invoked via
+                # __getattribute__ machinery
+                # and unfortunately ast.AST can't be patched either ;)
                 # node.parent = property(fget=lambda x: node._parent())
-                node.parent = parents_stack[-1]
+                # node._parent = parents_stack[-1]
             else:
-                node.parent = None
+                node._parent = None
             parents_stack.append(node)
             for child in ast.iter_child_nodes(node):
                 transform(child)
@@ -40,24 +47,23 @@ def interlink_ast(root):
 
 def find_parent(node, cls, stop_cls=ast.Module, strict=True):
     if strict and node is not None:
-        node = getattr(node, 'parent', None)
+        node = node_parent(node)
 
     while node and not isinstance(node, stop_cls):
         if isinstance(node, cls):
-            return node
-        node = getattr(node, 'parent', None)
+            return node_parent(node)
     return None
 
 
 def find_parents(node, cls, stop_cls=ast.Module, strict=True):
     if strict and node is not None:
-        node = getattr(node, 'parent', None)
+        node = node_parent(node)
 
     parents = []
     while node and not isinstance(node, stop_cls):
         if isinstance(node, cls):
             parents.append(node)
-        node = getattr(node, 'parent', None)
+        node = node_parent(node)
     return reversed(parents)
 
 
