@@ -30,11 +30,76 @@ root_logger.addHandler(console_info)
 LOG = logging.getLogger(__name__)
 
 # TODO: get rid of global state
+_functions_index = {}
+_parameters_index = {}
+
 _classes_index = {}
 _class_attributes = defaultdict(set)
-_functions_index = {}
+
 _modules = {}
 _src_roots = []
+
+
+class Stat:
+    @staticmethod
+    def total_functions():
+        return len(_functions_index)
+
+    @staticmethod
+    def total_classes():
+        return len(_classes_index)
+
+    @staticmethod
+    def total_attributes():
+        return len(_class_attributes)
+
+    @staticmethod
+    def undefined_parameters():
+        return [p for p in _parameters_index.values() if not p.suggested_types]
+
+    @staticmethod
+    def scattered_parameters():
+        return [p for p in _parameters_index.values() if len(p.suggested_types) > 1]
+
+
+
+    @staticmethod
+    def top_parameters_with_most_attributes(n, exclude_self=True):
+        if exclude_self:
+            params = itertools.chain.from_iterable(f.unbound_parameters for f in _functions_index.values())
+        else:
+            params = _parameters_index.values()
+        return heapq.nlargest(n, params, key=lambda x: len(x.attributes))
+
+    @staticmethod
+    def top_parameters_with_scattered_types(n):
+        return heapq.nlargest(n, Stat.scattered_parameters(), key=lambda x: len(x.suggested_types))
+
+    @staticmethod
+    def display(total=True, param_attributes=True, param_types=True, all_function=False, all_classes=False):
+        max_params = 20
+        if total:
+            LOG.info('Total: %d classes, %d functions, %d class attributes',
+                     Stat.total_classes(), Stat.total_functions(), Stat.total_attributes())
+        if param_attributes:
+            params = Stat.top_parameters_with_most_attributes(max_params)
+            log_items(params, 'Most frequently accessed parameters (top %d):', max_params)
+
+        if param_types:
+            n_undefined = len(Stat.undefined_parameters())
+            n_scattered = len(Stat.scattered_parameters())
+            LOG.info('Total: %d parameters has unknown type (%.2f%%), %d parameters has scattered types (%.2f%%)',
+                     n_undefined, (n_undefined / len(_parameters_index)) * 100,
+                     n_scattered, (n_scattered / len(_parameters_index)) * 100)
+            lines = []
+            for p in Stat.top_parameters_with_scattered_types(max_params):
+                lines.append('{}: {}'.format(p, p.suggested_types))
+            log_items(lines, 'Parameters with scattered type (top %d):', max_params)
+
+        if all_function:
+            log_items(_functions_index, 'Functions:')
+        if all_classes:
+            log_items(_classes_index, 'Classes:')
 
 
 class Definition:
@@ -44,8 +109,10 @@ class Definition:
 
     @property
     def name(self):
-        parts = self.qname.rsplit('.', maxsplit=1)
-        return parts[1] if len(parts) > 0 else parts[0]
+        parts = self.qname.rsplit('#', maxsplit=1)
+        if len(parts) == 1:
+            parts = self.qname.rsplit('.', maxsplit=1)
+        return parts[1] if len(parts) > 1 else parts[0]
 
     def __str__(self):
         return '{}({})'.format(type(self).__name__, self.qname)
@@ -87,12 +154,15 @@ class FunctionDefinition(Definition):
         return self.parameters
 
 
-class Parameter:
-    def __init__(self, name, attributes, function):
-        super().__init__()
-        self.name = name
+class Parameter(Definition):
+    def __init__(self, qname, node, attributes, function):
+        super().__init__(qname, node)
         self.attributes = attributes
         self.function = function
+        self.suggested_types = set()
+
+    def __str__(self):
+        return 'Parameter({})::{}'.format(self.qname, StructuralType(self.attributes))
 
 
 class ModuleVisitor(ast.NodeVisitor):
@@ -118,6 +188,9 @@ class StructuralType:
 
     def __str__(self):
         return '{{{}}}'.format(', '.join(self.attributes))
+
+    def __repr__(self):
+        return str(self)
 
 
 class AttributesCollector(ast.NodeVisitor):
@@ -169,22 +242,21 @@ class SimpleAttributesCollector(AttributesCollector):
 
 class FunctionVisitor(ModuleVisitor):
     def visit_FunctionDef(self, node):
-        function_name = self.qualified_name(node)
+        func_name = self.qualified_name(node)
+        func_def = FunctionDefinition(func_name, node)
 
-        param_names = []
-        param_names.extend(a.arg for a in node.args.args)
-        if node.args.vararg:
-            param_names.append(node.args.vararg)
-        param_names.extend(a.arg for a in node.args.kwonlyargs)
-        if node.args.kwarg:
-            param_names.append(node.args.kwarg)
+        for arg in itertools.chain(node.args.args, [node.args.vararg], node.args.kwonlyargs, [node.args.kwarg]):
+            # *args and **kwargs may be None
+            if arg is None:
+                continue
+            param_name = arg if isinstance(arg, str) else arg.arg
+            attributes = SimpleAttributesCollector(param_name).collect(node)
+            param_qname = func_name + '#' + param_name
+            param_def = Parameter(param_qname, node, attributes, func_def)
+            _parameters_index[param_qname] = param_def
 
-        definition = FunctionDefinition(function_name, node)
-        for name in param_names:
-            attributes = SimpleAttributesCollector(name).collect(node)
-            definition.parameters.append(Parameter(name, attributes, definition))
-
-        _functions_index[function_name] = definition
+            func_def.parameters.append(param_def)
+        _functions_index[func_name] = func_def
 
 
 class ClassVisitor(ModuleVisitor):
@@ -247,48 +319,27 @@ def analyze(path):
                     continue
                 analyze_module(abs_path)
 
-    if LOG.isEnabledFor(logging.INFO):
-        LOG.info('Total: %d classes, %d functions, %d class attributes',
-                 len(_classes_index), len(_functions_index), len(_class_attributes))
-
-        def most_busy_parameters(n, exclude_self):
-            if exclude_self:
-                params = itertools.chain.from_iterable(func.unbound_parameters for func in _functions_index.values())
-            else:
-                params = itertools.chain.from_iterable(func.parameters for func in _functions_index.values())
-
-            most_used = heapq.nlargest(n, params, key=lambda x: len(x.attributes))
-            lines = []
-            for p in most_used:
-                lines.append('{}#{}: {} attributes'.format(p.function.qname, p.name, len(p.attributes)))
-            log_items(lines, 'Most frequently accessed parameters (top %d):', n)
-
-            # LOG.info('Maximum referenced attributes %d: param %r, function %r',
-            # len(max_param.attributes), max_param.name, max_func.qualified_name)
-
-        most_busy_parameters(20, exclude_self=True)
-        # find_most_busy_param(10, exclude_self=False)
+                # find_most_busy_param(10, exclude_self=False)
     start_time = time.process_time()
     LOG.debug('Started inferring parameter types')
     for func in _functions_index.values():
         for param in func.parameters:
             structural_type = StructuralType(param.attributes)
-            classes = suggest_classes(structural_type)
-            LOG.info('  %s#%s: %s', func.qname, param.name, classes)
+            param.suggested_types = suggest_classes(structural_type)
     LOG.debug('Stopped inferring: %fs spent\n', time.process_time() - start_time)
-    log_items(_functions_index, 'Functions:')
-    log_items(_classes_index, 'Classes:')
+    if LOG.isEnabledFor(logging.INFO):
+        Stat.display()
 
 
 def suggest_classes(structural_type):
     base_classes = {attr: _class_attributes[attr] for attr in structural_type.attributes}
     if not base_classes:
-        return None
+        return set()
     suitable = functools.reduce(set.intersection, base_classes.values())
     return suitable
 
 
-def log_items(items, header, *args, level=logging.DEBUG):
+def log_items(items, header, *args, level=logging.INFO):
     LOG.log(level, '{}'.format(header), *args)
     for item in items:
         LOG.log(level, '  %s', item)
