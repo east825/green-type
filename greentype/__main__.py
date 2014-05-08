@@ -1,6 +1,7 @@
 import ast
 from collections import defaultdict
 import functools
+import inspect
 import operator
 import os
 import logging
@@ -79,7 +80,8 @@ class Stat:
         return heapq.nlargest(n, Stat.scattered_parameters(), key=lambda x: len(x.suggested_types))
 
     @staticmethod
-    def display(total=True, param_attributes=True, param_types=True, all_function=False, all_classes=False):
+    def display(total=True, param_attributes=True, param_types=True,
+                all_function=False, all_classes=False, all_params=False):
         max_params = 20
         if total:
             LOG.info('Total: %d classes, %d functions, %d class attributes',
@@ -107,9 +109,12 @@ class Stat:
             log_items(lines, 'Parameters with scattered type (top %d):', max_params)
 
         if all_function:
-            log_items(_functions_index, 'Functions:')
+            log_items(_functions_index.values(), 'Functions:')
         if all_classes:
-            log_items(_classes_index, 'Classes:')
+            log_items(_classes_index.values(), 'Classes:')
+        if all_params:
+            log_items(_parameters_index.values(), 'Parameters:')
+
 
 
 class Definition:
@@ -146,6 +151,9 @@ class ClassDefinition(Definition):
         self.bases = bases
         self.attributes = members
 
+    def __str__(self):
+        return 'class {}({})'.format(self.qname, ', '.join(self.bases))
+
 
 class FunctionDefinition(Definition):
     def __init__(self, qname, node, parameters=None):
@@ -163,6 +171,9 @@ class FunctionDefinition(Definition):
             return self.parameters[1:]
         return self.parameters
 
+    def __str__(self):
+        return 'def {}({})'.format(self.qname, ''.join(p.name for p in self.parameters))
+
 
 class Parameter(Definition):
     def __init__(self, qname, node, attributes, function):
@@ -172,7 +183,10 @@ class Parameter(Definition):
         self.suggested_types = set()
 
     def __str__(self):
-        return 'Parameter({})::{}'.format(self.qname, StructuralType(self.attributes))
+        s = '{}::{}'.format(self.qname, StructuralType(self.attributes))
+        if self.suggested_types:
+            return '{} ~ {}'.format(s, self.suggested_types)
+        return s
 
 
 class ModuleVisitor(ast.NodeVisitor):
@@ -310,6 +324,32 @@ def analyze_module(path):
         FunctionVisitor(path).visit(root_node)
 
 
+def collect_standard_classes():
+    def is_hidden(name):
+        return name.startswith('_')
+
+    import builtins
+    for module_attr_name, module_attr in vars(builtins).items():
+        if is_hidden(module_attr_name):
+            continue
+        if inspect.isclass(module_attr):
+            class_name = module_attr.__qualname__
+            class_bases = tuple(b.__qualname__ for b in module_attr.__bases__)
+            attributes = [name for name in dir(module_attr) if not is_hidden(name)]
+            cls_def = ClassDefinition(class_name, None, class_bases, attributes)
+            _classes_index[class_name] = cls_def
+            for attr in attributes:
+                _class_attributes[attr].add(cls_def)
+
+
+def suggest_classes(structural_type):
+    base_classes = {attr: _class_attributes[attr] for attr in structural_type.attributes}
+    if not base_classes:
+        return set()
+    suitable = functools.reduce(set.intersection, base_classes.values())
+    return suitable
+
+
 def analyze(path):
     if os.path.isfile(path):
         if not utils.is_python_source_module(path):
@@ -329,7 +369,7 @@ def analyze(path):
                     continue
                 analyze_module(abs_path)
 
-                # find_most_busy_param(10, exclude_self=False)
+    collect_standard_classes()
     start_time = time.process_time()
     LOG.debug('Started inferring parameter types')
     for func in _functions_index.values():
@@ -338,15 +378,7 @@ def analyze(path):
             param.suggested_types = suggest_classes(structural_type)
     LOG.debug('Stopped inferring: %fs spent\n', time.process_time() - start_time)
     if LOG.isEnabledFor(logging.INFO):
-        Stat.display()
-
-
-def suggest_classes(structural_type):
-    base_classes = {attr: _class_attributes[attr] for attr in structural_type.attributes}
-    if not base_classes:
-        return set()
-    suitable = functools.reduce(set.intersection, base_classes.values())
-    return suitable
+        Stat.display(all_params=True)
 
 
 def log_items(items, header, *args, level=logging.INFO):
