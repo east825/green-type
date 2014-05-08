@@ -54,14 +54,17 @@ class Stat:
         return len(_class_attributes)
 
     @staticmethod
+    def attributeless_parameters():
+        return [p for p in _parameters_index.values() if not p.attributes]
+
+
+    @staticmethod
     def undefined_parameters():
         return [p for p in _parameters_index.values() if not p.suggested_types]
 
     @staticmethod
     def scattered_parameters():
         return [p for p in _parameters_index.values() if len(p.suggested_types) > 1]
-
-
 
     @staticmethod
     def top_parameters_with_most_attributes(n, exclude_self=True):
@@ -82,18 +85,25 @@ class Stat:
             LOG.info('Total: %d classes, %d functions, %d class attributes',
                      Stat.total_classes(), Stat.total_functions(), Stat.total_attributes())
         if param_attributes:
-            params = Stat.top_parameters_with_most_attributes(max_params)
-            log_items(params, 'Most frequently accessed parameters (top %d):', max_params)
+            lines = []
+            for p in Stat.top_parameters_with_most_attributes(max_params):
+                lines.append('{:3} attributes: {}'.format(len(p.attributes), p))
+            log_items(lines, 'Most frequently accessed parameters (top %d):', max_params)
 
         if param_types:
+            total = len(_parameters_index)
+            n_attributeless = len(Stat.attributeless_parameters())
             n_undefined = len(Stat.undefined_parameters())
             n_scattered = len(Stat.scattered_parameters())
-            LOG.info('Total: %d parameters has unknown type (%.2f%%), %d parameters has scattered types (%.2f%%)',
-                     n_undefined, (n_undefined / len(_parameters_index)) * 100,
-                     n_scattered, (n_scattered / len(_parameters_index)) * 100)
+            LOG.info('Total: %d parameters has no attributes (%.2f%%), '
+                     '%d parameters has unknown type (%.2f%%), '
+                     '%d parameters has scattered types (%.2f%%)',
+                     n_attributeless, (n_attributeless / total) * 100,
+                     n_undefined, (n_undefined / total) * 100,
+                     n_scattered, (n_scattered / total) * 100)
             lines = []
             for p in Stat.top_parameters_with_scattered_types(max_params):
-                lines.append('{}: {}'.format(p, p.suggested_types))
+                lines.append('{:3} types: {}: {}'.format(len(p.suggested_types), p, p.suggested_types))
             log_items(lines, 'Parameters with scattered type (top %d):', max_params)
 
         if all_function:
