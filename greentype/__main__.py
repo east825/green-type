@@ -10,6 +10,7 @@ import sys
 import heapq
 import itertools
 import time
+import importlib.util
 
 from greentype import ast_utils
 from greentype import utils
@@ -35,7 +36,8 @@ _functions_index = {}
 _parameters_index = {}
 
 _classes_index = {}
-_class_attributes = defaultdict(set)
+_class_attributes_index = defaultdict(set)
+_modules_index = {}
 
 _modules = {}
 _src_roots = []
@@ -52,7 +54,7 @@ class Stat:
 
     @staticmethod
     def total_attributes():
-        return len(_class_attributes)
+        return len(_class_attributes_index)
 
     @staticmethod
     def attributeless_parameters():
@@ -116,7 +118,6 @@ class Stat:
             log_items(_parameters_index.values(), 'Parameters:')
 
 
-
 class Definition:
     def __init__(self, qname, node):
         self.qname = qname
@@ -146,8 +147,9 @@ class Definition:
 
 
 class ClassDefinition(Definition):
-    def __init__(self, qname, node, bases, members):
+    def __init__(self, module_name, qname, node, bases, members):
         super().__init__(qname, node)
+        self.module_name = module_name
         self.bases = bases
         self.attributes = members
 
@@ -156,12 +158,13 @@ class ClassDefinition(Definition):
 
 
 class FunctionDefinition(Definition):
-    def __init__(self, qname, node, parameters=None):
+    def __init__(self, module_name, qname, node, parameters=None):
         super().__init__(qname, node)
         if parameters is None:
             self.parameters = []
         else:
             self.parameters = parameters
+        self.module_name = module_name
 
     @property
     def unbound_parameters(self):
@@ -173,6 +176,29 @@ class FunctionDefinition(Definition):
 
     def __str__(self):
         return 'def {}({})'.format(self.qname, ''.join(p.name for p in self.parameters))
+
+
+class Import(Definition):
+    def __init__(self, qname, node, alias=None, star=False):
+        super().__init__(qname, node)
+        self.qname = qname
+        self.alias = alias if alias else qname
+        self.star = star
+
+    def imports_name(self, name, star_imports=False):
+        if self.star and star_imports:
+            return True
+        return name.startswith(self.alias)
+
+
+class ModuleDefinition(Definition):
+    def __init__(self, qname, node, path, imports):
+        super().__init__(qname, qname, node)
+        self.path = path
+        self.imports = imports
+
+    def __str__(self):
+        return 'module {} at {!r}'.format(self.qname, self.path)
 
 
 class Parameter(Definition):
@@ -187,23 +213,6 @@ class Parameter(Definition):
         if self.suggested_types:
             return '{} ~ {}'.format(s, self.suggested_types)
         return s
-
-
-class ModuleVisitor(ast.NodeVisitor):
-    def __init__(self, module_path):
-        super().__init__()
-        self.module_path = module_path
-        self.module_name = utils.module_path_to_name(module_path)
-
-    def qualified_name(self, node):
-        scopes = ast_utils.find_parents(node, cls=(ast.FunctionDef, ast.ClassDef))
-        prefix = '.'.join(ast_utils.node_name(scope) for scope in scopes)
-        name = ast_utils.node_name(node)
-        if prefix:
-            name = prefix + '.' + name
-        if self.module_name:
-            name = self.module_name + '.' + name
-        return name
 
 
 class StructuralType:
@@ -264,10 +273,65 @@ class SimpleAttributesCollector(AttributesCollector):
                     self.attributes.add('__delitem__')
 
 
-class FunctionVisitor(ModuleVisitor):
+class ModuleVisitor(ast.NodeVisitor):
+    def __init__(self, path):
+        self.path = path
+        self.module_name = utils.module_path_to_name(path)
+        super().__init__()
+
+    def visit_Module(self, node):
+        imports = []
+        # inspect only top-level imports
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.Import):
+                for alias in child.names:
+                    imports.append(Import(alias.name, alias.asname))
+            elif isinstance(child, ast.ImportFrom):
+                if child.level:
+                    path_components = self.path.split(os.path.sep)
+                    package = utils.module_path_to_name(path_components[:-child.level])
+                else:
+                    package = ''
+                if child.module and package:
+                    target_module = package + '.' + child.module
+                elif child.module:
+                    target_module = child.module
+                elif package:
+                    target_module = package
+                else:
+                    raise Exception('Malformed ImportFrom statement: file={!r} module={}, level={}'.format(
+                        self.path, child.module, child.level))
+                for alias in child.names:
+                    name = target_module + '.' + alias.name
+                    imports.append(Import(name, alias.asname))
+        module_def = ModuleDefinition(self.module_name, node, self.path, imports)
+        _modules_index[self.module_name] = module_def
+        return module_def
+
+
+class ModuleAnalyzer(ast.NodeVisitor):
+    def __init__(self, module_def):
+        super().__init__()
+        self.module_def = module_def
+
+    def analyze(self):
+        self.visit(self.module_def.node)
+
+    def qualified_name(self, node):
+        scopes = ast_utils.find_parents(node, cls=(ast.FunctionDef, ast.ClassDef))
+        prefix = '.'.join(ast_utils.node_name(scope) for scope in scopes)
+        name = ast_utils.node_name(node)
+        if prefix:
+            name = prefix + '.' + name
+        if self.module_def.qname:
+            name = self.module_def.qname + '.' + name
+        return name
+
+
+class FunctionAnalyzer(ModuleAnalyzer):
     def visit_FunctionDef(self, node):
         func_name = self.qualified_name(node)
-        func_def = FunctionDefinition(func_name, node)
+        func_def = FunctionDefinition(self.module_def.path, func_name, node)
 
         for arg in itertools.chain(node.args.args, [node.args.vararg], node.args.kwonlyargs, [node.args.kwarg]):
             # *args and **kwargs may be None
@@ -283,7 +347,7 @@ class FunctionVisitor(ModuleVisitor):
         _functions_index[func_name] = func_def
 
 
-class ClassVisitor(ModuleVisitor):
+class ClassAnalyzer(ModuleAnalyzer):
     def visit_ClassDef(self, node):
         class_name = self.qualified_name(node)
 
@@ -291,7 +355,8 @@ class ClassVisitor(ModuleVisitor):
         for expr in node.bases:
             base_name = ast_utils.attributes_chain_to_name(expr)
             if base_name is None:
-                LOG.warning('Class %s in module %s uses computed bases. Not supported.', class_name, self.module_path)
+                LOG.warning('Class %s in module %s uses computed bases. Not supported.',
+                            class_name, self.module_def.path)
                 continue
             bases_names.append(base_name)
 
@@ -309,9 +374,9 @@ class ClassVisitor(ModuleVisitor):
                     self.attributes.add(target.id)
 
         class_attributes = ClassAttributeCollector().collect(node)
-        definition = ClassDefinition(class_name, node, bases_names, class_attributes)
+        definition = ClassDefinition(self.module_def.path, class_name, node, bases_names, class_attributes)
         for attribute in class_attributes:
-            _class_attributes[attribute].add(definition)
+            _class_attributes_index[attribute].add(definition)
         _classes_index[class_name] = definition
 
 
@@ -319,9 +384,10 @@ def analyze_module(path):
     LOG.debug('Analyzing {!r}'.format(path))
     with open(path) as f:
         root_node = ast.parse(f.read())
+        module_def = ModuleVisitor(path).visit(root_node)
         ast_utils.interlink_ast(root_node)
-        ClassVisitor(path).visit(root_node)
-        FunctionVisitor(path).visit(root_node)
+        ClassAnalyzer(module_def).analyze()
+        FunctionAnalyzer(module_def).analyze()
 
 
 def collect_standard_classes():
@@ -329,6 +395,7 @@ def collect_standard_classes():
         return name.startswith('_')
 
     import builtins
+
     for module_attr_name, module_attr in vars(builtins).items():
         if is_hidden(module_attr_name):
             continue
@@ -336,18 +403,71 @@ def collect_standard_classes():
             class_name = module_attr.__qualname__
             class_bases = tuple(b.__qualname__ for b in module_attr.__bases__)
             attributes = [name for name in dir(module_attr) if not is_hidden(name)]
-            cls_def = ClassDefinition(class_name, None, class_bases, attributes)
+            cls_def = ClassDefinition('', class_name, None, class_bases, attributes)
             _classes_index[class_name] = cls_def
             for attr in attributes:
-                _class_attributes[attr].add(cls_def)
+                _class_attributes_index[attr].add(cls_def)
 
 
 def suggest_classes(structural_type):
-    base_classes = {attr: _class_attributes[attr] for attr in structural_type.attributes}
-    if not base_classes:
+    def unite(sets):
+        return functools.reduce(set.union, sets, set())
+
+    def intersect(sets):
+        if not sets:
+            return {}
+        return functools.reduce(set.intersection, sets)
+
+    def resolve_bases(class_def):
+        module_name = class_def.module_name
+        bases = set()
+        for base_ref in class_def.bases:
+            # base class reference is not qualified
+            if '.' not in base_ref:
+                # first, look up in the same module
+                qname = module_name + '.' + base_ref if module_name else base_ref
+                resolved = _classes_index.get(qname)
+                if resolved:
+                    bases.add(resolved)
+                    continue
+            if module_name:
+                module_def = _modules_index[module_name]
+                for imp in module_def.imports:
+                    if imp.imports_name(base_ref):
+                        if imp.qname not in _modules_index:
+                            # handle spec
+                            spec = analyze(importlib.util.find_spec(qname))
+                    elif imp.star:
+                        pass
+
+                base_ref = (module_name + '.' + base_ref)
+                if base_ref:
+                    pass
+
+        return bases
+
+
+    class_pool = {attr: _class_attributes_index[attr] for attr in structural_type.attributes}
+    if not class_pool:
         return set()
-    suitable = functools.reduce(set.intersection, base_classes.values())
-    return suitable
+    with_all_attributes = intersect(class_pool.values())
+    with_any_attribute = unite(class_pool.values())
+
+    suitable_classes = set(with_all_attributes)
+    resolved_bases = {}
+    for class_def in with_any_attribute - with_all_attributes:
+        bases = resolve_bases(class_def)
+        resolved_bases[class_def] = bases
+        inherited_attributes = unite(b.attributes for b in bases) | {class_def.attributes}
+        if structural_type.attributes in inherited_attributes:
+            suitable_classes.add(class_def)
+
+    for class_def in set(suitable_classes):
+        for base_class in resolved_bases[class_def]:
+            if base_class in suitable_classes:
+                suitable_classes.remove(class_def)
+
+    return suitable_classes
 
 
 def analyze(path):
