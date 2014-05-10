@@ -1,4 +1,6 @@
 import ast
+import importlib
+import inspect
 import logging
 from collections import defaultdict
 from contextlib import contextmanager
@@ -34,10 +36,7 @@ class Definition(object):
 
     @property
     def name(self):
-        parts = self.qname.rsplit('#', maxsplit=1)
-        if len(parts) == 1:
-            parts = self.qname.rsplit('.', maxsplit=1)
-        return parts[1] if len(parts) > 1 else parts[0]
+        return utils.partition_any(self.qname, '#.', from_end=True)[1]
 
     def __str__(self):
         return '{}({})'.format(type(self).__name__, self.qname)
@@ -112,6 +111,10 @@ class Parameter(object):
         self.attributes = attributes
         self.suggested_types = set()
 
+    @property
+    def name(self):
+        return utils.partition_any(self.qname, '#.', from_end=True)[1]
+
     def __str__(self):
         s = '{}::{}'.format(self.qname, StructuralType(self.attributes))
         if self.suggested_types:
@@ -164,7 +167,6 @@ class SimpleAttributesCollector(AttributesCollector):
                 self.attributes.add(node.attr)
         else:
             self.visit(node.value)
-
 
     def visit_Subscript(self, node):
         if isinstance(node.value, ast.Name) and node.value.id == self.name:
@@ -219,6 +221,7 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
         return node_name
 
     def run(self):
+        LOG.debug('Analyzing module %r', self.module_path)
         with open(self.module_path) as f:
             self.root = ast.parse(f.read(), self.module_path)
         ast_utils.interlink_ast(self.root)
@@ -330,7 +333,21 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
         self.register_function(func_def)
         return func_def
 
+class ReflectiveModuleIndexer(Indexer):
+    def __init__(self, module_name):
+        self.module_name = module_name
 
-class ReflexiveClassDefinition(ClassDefinition):
-    def __init__(self, qname, bases, attributes):
-        super().__init__(qname, None, bases, attributes)
+    def run(self):
+        LOG.debug('Reflectively analyzing %r', self.module_name)
+        def is_hidden(name):
+            return name.startswith('_')
+
+        module = importlib.import_module(self.module_name, None)
+        for module_attr_name, module_attr in vars(module).items():
+            if is_hidden(module_attr_name):
+                continue
+            if inspect.isclass(module_attr):
+                class_name = module_attr.__qualname__
+                bases = tuple(b.__qualname__ for b in module_attr.__bases__)
+                attributes = [name for name in dir(module_attr) if not is_hidden(name)]
+                self.register_class(ClassDefinition(class_name, None, None, bases, attributes))

@@ -1,5 +1,4 @@
 from collections.abc import Iterable
-import ast
 import os
 import sys
 
@@ -11,12 +10,12 @@ def is_collection(x):
 def partition_any(s, separators, from_end=False):
     for sep in separators:
         if from_end:
-            right, _, left = s.rparition(sep)
-            if right is not None:
+            right, _, left = s.rpartition(sep)
+            if right:
                 return right, left
         else:
             right, _, left = s.partition(sep)
-            if left is not None:
+            if left:
                 return right, left
     return (None, s) if from_end else (s, None)
 
@@ -43,7 +42,7 @@ def camel_to_snake(s):
 
 
 def module_path_to_name(path):
-    from greentype.runner import _src_roots
+    from runner import _src_roots
 
     path = os.path.abspath(path)
     for src_root in _src_roots + sys.path:
