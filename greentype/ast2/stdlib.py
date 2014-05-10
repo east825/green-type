@@ -3,7 +3,7 @@ import importlib
 import inspect
 import sys
 
-from greentype.__main__ import ClassDefinition
+from greentype.runner import ClassDefinition
 
 class Indexer:
     _class_index = {}
