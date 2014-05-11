@@ -17,18 +17,33 @@ LOG = logging.getLogger(__name__)
 
 SRC_ROOTS = []
 
-def path2qname(path):
+
+def path2module(path):
     path = os.path.abspath(path)
     for src_root in SRC_ROOTS + sys.path:
         if path.startswith(src_root):
+            # TODO: check that on all way up to module correct packages with __init__ is used
             relative = os.path.relpath(path, src_root)
             dir_name, base_name = os.path.split(relative)
             if base_name == '__init__.py':
                 prepared = dir_name
             else:
-                prepared, _ =  os.path.splitext(relative)
+                prepared, _ = os.path.splitext(relative)
             return prepared.replace(os.path.sep, '.').strip('.')
-    raise ValueError('Unresolved module {!r}'.format(path))
+    raise ValueError('Unresolved module: path={!r}'.format(path))
+
+
+def module2path(module_name):
+    rel_path = os.path.sep.join(module_name.split('.'))
+    for src_root in SRC_ROOTS + sys.path:
+        path = os.path.join(src_root, rel_path)
+        package_path = os.path.join(path, '__init__.py')
+        if os.path.isfile(package_path):
+            return package_path
+        module_path = path + '.py'
+        if os.path.isfile(module_path):
+            return module_path
+    raise ValueError('Unresolved module: name={!r}'.format(module_name))
 
 
 class Definition(object):
@@ -67,10 +82,12 @@ class ModuleDefinition(Definition):
 
 
 class Import(object):
-    def __init__(self, imported_name, local_name=None, star=False):
+    def __init__(self, imported_name, local_name, import_from, star_import=False):
+        assert not (star_import and not import_from)
         self.imported_name = imported_name
         self.local_name = local_name if local_name else imported_name
-        self.star = star
+        self.star = star_import
+        self.import_from = import_from
 
     def imports_name(self, name, star_imports=False):
         if self.star and star_imports:
@@ -264,12 +281,12 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
         for child in ast.iter_child_nodes(node):
             if isinstance(child, ast.Import):
                 for alias in child.names:
-                    imports.append(Import(alias.name, alias.asname))
+                    imports.append(Import(alias.name, alias.asname, False))
             elif isinstance(child, ast.ImportFrom):
                 if child.level:
                     path_components = self.module_path.split(os.path.sep)
                     package_path = os.path.join(*path_components[:-child.level])
-                    package = path2qname(package_path)
+                    package = path2module(package_path)
                 else:
                     package = ''
                 if child.module and package:
@@ -283,9 +300,12 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
                         'Malformed ImportFrom statement: file={!r} module={}, level={}'.format(
                             self.module_path, child.module, child.level))
                 for alias in child.names:
-                    name = target_module + '.' + alias.name
-                    imports.append(Import(name, alias.asname))
-        module_def = ModuleDefinition(path2qname(self.module_path), node,  self.module_path, imports)
+                    if alias.name == '*':
+                        imports.append(Import(target_module, alias.asname, True, True))
+                    else:
+                        imported_name = '{}.{}'.format(target_module, alias.name)
+                        imports.append(Import(imported_name, alias.asname or alias.name, True, False))
+        module_def = ModuleDefinition(path2module(self.module_path), node, self.module_path, imports)
         self.register_module(module_def)
         return module_def
 
@@ -334,12 +354,14 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
         self.register_function(func_def)
         return func_def
 
+
 class ReflectiveModuleIndexer(Indexer):
     def __init__(self, module_name):
         self.module_name = module_name
 
     def run(self):
         LOG.debug('Reflectively analyzing %r', self.module_name)
+
         def is_hidden(name):
             return name.startswith('_')
 
@@ -350,7 +372,7 @@ class ReflectiveModuleIndexer(Indexer):
             if inspect.isclass(module_attr):
                 class_name = module_attr.__qualname__
                 bases = tuple(b.__qualname__ for b in module_attr.__bases__)
-                attributes = [name for name in dir(module_attr) if not is_hidden(name)]
+                attributes = {name for name in dir(module_attr) if not is_hidden(name)}
                 self.register_class(ClassDefinition(class_name, None, None, bases, attributes))
 
 
@@ -375,6 +397,9 @@ class Statistic(object):
     def total_attributes(self):
         return len(Indexer.CLASS_ATTRIBUTE_INDEX)
 
+    def total_parameters(self):
+        return len(Indexer.PARAMETERS_INDEX)
+
     def attributeless_params(self):
         return [p for p in Indexer.PARAMETERS_INDEX.values() if not p.attributes]
 
@@ -398,8 +423,11 @@ class Statistic(object):
     def format(self):
         formatted = ''
         if self.show_total:
-            formatted += 'Total indexed: {} classes, {} functions, {} class attributes'.format(
-                self.total_classes(), self.total_functions(), self.total_attributes())
+            formatted += 'Total indexed: {} classes with {} attributes, ' \
+                         '{} functions with {} parameters'.format(self.total_classes(),
+                                                                  self.total_attributes(),
+                                                                  self.total_functions(),
+                                                                  self.total_parameters())
         if self.show_prolific_params:
             prolific_params = self.top_parameters_with_most_attributes(self.top_size)
             formatted += self._format_list(
@@ -428,13 +456,12 @@ class Statistic(object):
                 items=self.top_parameters_with_scattered_types(self.top_size),
                 prefix_func=lambda x: '{:3} types'.format(len(x.suggested_types))
             )
-
         if self.dump_classes:
             formatted += self._format_list(header='Classes:', items=Indexer.CLASS_INDEX.values())
         if self.dump_functions:
             formatted += self._format_list(header='Functions:', items=Indexer.FUNCTION_INDEX.values())
         if self.dump_params:
-            formatted += self._format_list(header='Parameters:', items=Indexer.PARAMETERS_INDEX)
+            formatted += self._format_list(header='Parameters:', items=Indexer.PARAMETERS_INDEX.values())
         return formatted
 
     def __str__(self):

@@ -1,4 +1,5 @@
 from collections.abc import Iterable
+import functools
 import os
 import sys
 
@@ -18,6 +19,41 @@ def partition_any(s, separators, from_end=False):
             if left:
                 return right, left
     return (None, s) if from_end else (s, None)
+
+
+def qname_merge(n1, n2):
+    parts1 = n1.split(sep='.')
+    parts2 = n2.split(sep='.')
+    if not n1 or not n2:
+        return n2 or n1
+    for n in range(len(parts2), 0, -1):
+        if parts1[-n:] == parts2[:n]:
+            return '.'.join(parts1 + parts2[n:])
+    return '.'.join(parts1 + parts2)
+
+
+def qname_head(name):
+    _, _, head = name.rpartition('.')
+    return head or None
+
+
+def qname_tail(name):
+    tail, _, _ = name.rpartition('.')
+    return tail or None
+
+
+def memo(f):
+    results = {}
+    missing = object()
+
+    @functools.wraps(f)
+    def wrapper(*args):
+        r = results.get(args, missing)
+        if r is missing:
+            r = results[args] = f(*args)
+        return r
+
+    return wrapper
 
 
 def camel_to_snake(s):
