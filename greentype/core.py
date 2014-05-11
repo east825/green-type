@@ -1,4 +1,5 @@
 import ast
+import heapq
 import importlib
 import inspect
 import logging
@@ -10,6 +11,7 @@ from . import utils
 import itertools
 import os
 import sys
+import textwrap
 
 LOG = logging.getLogger(__name__)
 
@@ -93,7 +95,6 @@ class FunctionDefinition(Definition):
         self.module = module
         self.parameters = parameters
 
-    @property
     def unbound_parameters(self):
         # outer_class = ast_utils.find_parent(self.node, ast.ClassDef, stop_cls=ast.FunctionDef, strict=True)
         # if outer_class is not None:
@@ -102,7 +103,7 @@ class FunctionDefinition(Definition):
         return self.parameters
 
     def __str__(self):
-        return 'def {}({})'.format(self.qname, ''.join(p.name for p in self.parameters))
+        return 'def {}({})'.format(self.qname, ', '.join(p.name for p in self.parameters))
 
 
 class Parameter(object):
@@ -118,7 +119,7 @@ class Parameter(object):
     def __str__(self):
         s = '{}::{}'.format(self.qname, StructuralType(self.attributes))
         if self.suggested_types:
-            return '{} ~ {}'.format(s, self.suggested_types)
+            s = '{} ~ {}'.format(s, self.suggested_types)
         return s
 
 
@@ -267,7 +268,7 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
             elif isinstance(child, ast.ImportFrom):
                 if child.level:
                     path_components = self.module_path.split(os.path.sep)
-                    package_path = os.path.join(path_components[:-child.level])
+                    package_path = os.path.join(*path_components[:-child.level])
                     package = path2qname(package_path)
                 else:
                     package = ''
@@ -329,7 +330,7 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
             param_qname = func_name + '.' + param_name
             parameters.append(Parameter(param_qname, attributes))
 
-        func_def = FunctionDefinition(self.module_def.path, func_name, node, parameters)
+        func_def = FunctionDefinition(func_name, node, self.module_def, parameters)
         self.register_function(func_def)
         return func_def
 
@@ -351,3 +352,117 @@ class ReflectiveModuleIndexer(Indexer):
                 bases = tuple(b.__qualname__ for b in module_attr.__bases__)
                 attributes = [name for name in dir(module_attr) if not is_hidden(name)]
                 self.register_class(ClassDefinition(class_name, None, None, bases, attributes))
+
+
+class Statistic(object):
+    def __init__(self, total=True, prolific_params=True, param_types=True,
+                 dump_functions=False, dump_classes=False, dump_params=False,
+                 top_size=20):
+        self.show_total = total
+        self.show_prolific_params = prolific_params
+        self.show_param_types = param_types
+        self.dump_functions = dump_functions
+        self.dump_classes = dump_classes
+        self.dump_params = dump_params
+        self.top_size = top_size
+
+    def total_functions(self):
+        return len(Indexer.FUNCTION_INDEX)
+
+    def total_classes(self):
+        return len(Indexer.CLASS_INDEX)
+
+    def total_attributes(self):
+        return len(Indexer.CLASS_ATTRIBUTE_INDEX)
+
+    def attributeless_params(self):
+        return [p for p in Indexer.PARAMETERS_INDEX.values() if not p.attributes]
+
+    def undefined_parameters(self):
+        return [p for p in Indexer.PARAMETERS_INDEX.values() if not p.suggested_types]
+
+    def scattered_parameters(self):
+        return [p for p in Indexer.PARAMETERS_INDEX.values() if len(p.suggested_types) > 1]
+
+    def top_parameters_with_most_attributes(self, n, exclude_self=True):
+        if exclude_self:
+            # params = itertools.chain.from_iterable(f.unbound_parameters() for f in _functions_index.values())
+            params = [p for p in Indexer.PARAMETERS_INDEX.values() if p.name != 'self']
+        else:
+            params = Indexer.PARAMETERS_INDEX.values()
+        return heapq.nlargest(n, params, key=lambda x: len(x.attributes))
+
+    def top_parameters_with_scattered_types(self, n):
+        return heapq.nlargest(n, self.scattered_parameters(), key=lambda x: len(x.suggested_types))
+
+    def format(self):
+        formatted = ''
+        if self.show_total:
+            formatted += 'Total indexed: {} classes, {} functions, {} class attributes'.format(
+                self.total_classes(), self.total_functions(), self.total_attributes())
+        if self.show_prolific_params:
+            prolific_params = self.top_parameters_with_most_attributes(self.top_size)
+            formatted += self._format_list(
+                header='Most frequently accessed parameters (top {}):'.format(self.top_size),
+                items=prolific_params,
+                prefix_func=lambda x: '{:3} attributes'.format(len(x.attributes))
+            )
+
+        if self.show_param_types:
+            total_params = len(Indexer.PARAMETERS_INDEX)
+            total_attributeless = len(self.attributeless_params())
+            total_undefined = len(self.undefined_parameters())
+            total_scattered = len(self.scattered_parameters())
+            formatted += textwrap.dedent("""
+            Parameters statistic:
+              {:3} ({:.2%}) parameters has no attributes,
+              {:3} ({:.2%}) parameters has unknown type,
+              {:3} ({:.2%}) parameters has scattered types
+            """.format(
+                total_attributeless, (total_attributeless / total_params),
+                total_undefined, (total_undefined / total_params),
+                total_scattered, (total_scattered / total_params)))
+
+            formatted += self._format_list(
+                header='Parameters with scattered type (top {}):'.format(self.top_size),
+                items=self.top_parameters_with_scattered_types(self.top_size),
+                prefix_func=lambda x: '{:3} types'.format(len(x.suggested_types))
+            )
+
+        if self.dump_classes:
+            formatted += self._format_list(header='Classes:', items=Indexer.CLASS_INDEX.values())
+        if self.dump_functions:
+            formatted += self._format_list(header='Functions:', items=Indexer.FUNCTION_INDEX.values())
+        if self.dump_params:
+            formatted += self._format_list(header='Parameters:', items=Indexer.PARAMETERS_INDEX)
+        return formatted
+
+    def __str__(self):
+        return self.format()
+
+    def __repr__(self):
+        preferences = ', '.join('{}={}'.format(k, v) for k, v in vars(self).items())
+        return 'Statistic({})'.format(preferences)
+
+
+    def _format_list(self, items, header=None, prefix_func=None, indent='  '):
+        formatted = '\n'
+        if header is not None:
+            formatted += '{}\n'.format(header)
+        blocks = []
+        for item in items:
+            item_text = str(item)
+            if prefix_func is not None:
+                prefix = '{}{} : '.format(indent, prefix_func(item))
+                lines = item_text.splitlines()
+                first_line, remaining_lines = lines[0], lines[1:]
+                block = '{}{}'.format(prefix, first_line)
+                if remaining_lines:
+                    indented_tail = textwrap.indent('\n'.join(remaining_lines), ' ' * len(prefix))
+                    blocks.append('{}\n{}'.format(block, indented_tail))
+                else:
+                    blocks.append(block)
+            else:
+                blocks.append(textwrap.indent(item_text, indent))
+        formatted += '\n'.join(blocks)
+        return formatted + '\n'

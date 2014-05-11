@@ -3,12 +3,12 @@ import os
 import logging
 import argparse
 import sys
-import heapq
 import time
 import importlib.util
 
 from greentype import core
 from greentype import utils
+from greentype.core import Statistic
 
 
 root_logger = logging.getLogger()
@@ -26,80 +26,6 @@ root_logger.addHandler(console_info)
 
 LOG = logging.getLogger(__name__)
 
-class Stat:
-    @staticmethod
-    def total_functions():
-        return len(core.Indexer.FUNCTION_INDEX)
-
-    @staticmethod
-    def total_classes():
-        return len(core.Indexer.CLASS_INDEX)
-
-    @staticmethod
-    def total_attributes():
-        return len(core.Indexer.CLASS_ATTRIBUTE_INDEX)
-
-    @staticmethod
-    def attributeless_parameters():
-        return [p for p in core.Indexer.PARAMETERS_INDEX.values() if not p.attributes]
-
-
-    @staticmethod
-    def undefined_parameters():
-        return [p for p in core.Indexer.PARAMETERS_INDEX.values() if not p.suggested_types]
-
-    @staticmethod
-    def scattered_parameters():
-        return [p for p in core.Indexer.PARAMETERS_INDEX.values() if len(p.suggested_types) > 1]
-
-    @staticmethod
-    def top_parameters_with_most_attributes(n, exclude_self=True):
-        if exclude_self:
-            # params = itertools.chain.from_iterable(f.unbound_parameters for f in _functions_index.values())
-            params = [p for p in core.Indexer.PARAMETERS_INDEX.values() if p.name != 'self' ]
-        else:
-            params = core.Indexer.PARAMETERS_INDEX.values()
-        return heapq.nlargest(n, params, key=lambda x: len(x.attributes))
-
-    @staticmethod
-    def top_parameters_with_scattered_types(n):
-        return heapq.nlargest(n, Stat.scattered_parameters(), key=lambda x: len(x.suggested_types))
-
-    @staticmethod
-    def display(total=True, param_attributes=True, param_types=True,
-                all_function=False, all_classes=False, all_params=False):
-        max_params = 20
-        if total:
-            LOG.info('Total: %d classes, %d functions, %d class attributes',
-                     Stat.total_classes(), Stat.total_functions(), Stat.total_attributes())
-        if param_attributes:
-            lines = []
-            for p in Stat.top_parameters_with_most_attributes(max_params):
-                lines.append('{:3} attributes: {}'.format(len(p.attributes), p))
-            log_items(lines, 'Most frequently accessed parameters (top %d):', max_params)
-
-        if param_types:
-            total = len(core.Indexer.PARAMETERS_INDEX)
-            n_attributeless = len(Stat.attributeless_parameters())
-            n_undefined = len(Stat.undefined_parameters())
-            n_scattered = len(Stat.scattered_parameters())
-            LOG.info('Total: %d parameters has no attributes (%.2f%%), '
-                     '%d parameters has unknown type (%.2f%%), '
-                     '%d parameters has scattered types (%.2f%%)',
-                     n_attributeless, (n_attributeless / total) * 100,
-                     n_undefined, (n_undefined / total) * 100,
-                     n_scattered, (n_scattered / total) * 100)
-            lines = []
-            for p in Stat.top_parameters_with_scattered_types(max_params):
-                lines.append('{:3} types: {}: {}'.format(len(p.suggested_types), p, p.suggested_types))
-            log_items(lines, 'Parameters with scattered type (top %d):', max_params)
-
-        if all_function:
-            log_items(core.Indexer.FUNCTION_INDEX.values(), 'Functions:')
-        if all_classes:
-            log_items(core.Indexer.CLASS_INDEX.values(), 'Classes:')
-        if all_params:
-            log_items(core.Indexer.PARAMETERS_INDEX.values(), 'Parameters:')
 
 def analyze_module(path):
     core.SourceModuleIndexer(path).run()
@@ -152,16 +78,16 @@ def suggest_classes(structural_type):
     suitable_classes = set(with_all_attributes)
     # resolved_bases = {}
     # for class_def in with_any_attribute - with_all_attributes:
-    #     bases = resolve_bases(class_def)
-    #     resolved_bases[class_def] = bases
-    #     inherited_attributes = unite(b.attributes for b in bases) | {class_def.attributes}
-    #     if structural_type.attributes in inherited_attributes:
-    #         suitable_classes.add(class_def)
+    # bases = resolve_bases(class_def)
+    # resolved_bases[class_def] = bases
+    # inherited_attributes = unite(b.attributes for b in bases) | {class_def.attributes}
+    # if structural_type.attributes in inherited_attributes:
+    # suitable_classes.add(class_def)
     #
     # for class_def in set(suitable_classes):
-    #     for base_class in resolved_bases[class_def]:
-    #         if base_class in suitable_classes:
-    #             suitable_classes.remove(class_def)
+    # for base_class in resolved_bases[class_def]:
+    # if base_class in suitable_classes:
+    # suitable_classes.remove(class_def)
 
     return suitable_classes
 
@@ -193,15 +119,7 @@ def analyze(path):
             structural_type = core.StructuralType(param.attributes)
             param.suggested_types = suggest_classes(structural_type)
     LOG.debug('Stopped inferring: %fs spent\n', time.process_time() - start_time)
-    if LOG.isEnabledFor(logging.INFO):
-        Stat.display(all_params=True)
-
-
-def log_items(items, header, *args, level=logging.INFO):
-    LOG.log(level, '{}'.format(header), *args)
-    for item in items:
-        LOG.log(level, '  %s', item)
-    LOG.log(level, '')
+    print(Statistic())
 
 
 def main():
