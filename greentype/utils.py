@@ -21,7 +21,7 @@ def partition_any(s, separators, from_end=False):
     return (None, s) if from_end else (s, None)
 
 
-def qname_merge(n1, n2):
+def qname_merge(n1, n2, accept_disjoint=True):
     parts1 = n1.split(sep='.')
     parts2 = n2.split(sep='.')
     if not n1 or not n2:
@@ -29,7 +29,7 @@ def qname_merge(n1, n2):
     for n in range(len(parts2), 0, -1):
         if parts1[-n:] == parts2[:n]:
             return '.'.join(parts1 + parts2[n:])
-    return '.'.join(parts1 + parts2)
+    return '.'.join(parts1 + parts2) if accept_disjoint else None
 
 
 def qname_head(name):
@@ -40,6 +40,15 @@ def qname_head(name):
 def qname_tail(name):
     tail, _, _ = name.rpartition('.')
     return tail or None
+
+
+def qname_qualified_by(name, qualifier):
+    if not qualifier:
+        return True
+    # parts1 = name.split('.')
+    # parts2 = qualifier.split('.')
+    # return parts1[:len(parts2)] == parts2
+    return name == qualifier or name.startswith(qualifier + '.')
 
 
 def memo(f):

@@ -92,7 +92,7 @@ class Import(object):
     def imports_name(self, name, star_imports=False):
         if self.star_import and star_imports:
             return True
-        return name.startswith(self.local_name)
+        return utils.qname_qualified_by(name, self.local_name)
 
 
 class ClassDefinition(Definition):

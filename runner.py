@@ -1,3 +1,4 @@
+import unittest
 import functools
 import os
 import logging
@@ -140,9 +141,8 @@ def suggest_classes(struct_type):
 
     # remove subclasses if their superclasses is suitable also
     for class_def in suitable_classes.copy():
-        for base_class in resolve_bases(class_def):
-            if base_class in suitable_classes:
-                suitable_classes.remove(class_def)
+        if any(base in suitable_classes for base in resolve_bases(class_def)):
+            suitable_classes.remove(class_def)
 
     return suitable_classes
 
@@ -175,7 +175,7 @@ def analyze(path):
             structural_type = core.StructuralType(param.attributes)
             param.suggested_types = suggest_classes(structural_type)
     LOG.debug('Stopped inferring: %fs spent\n', time.process_time() - start_time)
-    print(Statistic(dump_params=True))
+    print(Statistic())
 
 
 def main():

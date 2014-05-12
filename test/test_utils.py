@@ -15,6 +15,12 @@ def test_qname():
     assert utils.qname_tail('') is None
     assert utils.qname_head('foo.bar') == 'bar'
     assert utils.qname_tail('foo.bar') == 'foo'
+
+    assert utils.qname_qualified_by('foo.bar', '')
+    assert utils.qname_qualified_by('foo.bar', 'foo')
+    assert utils.qname_qualified_by('foo.bar', 'foo.bar')
+    assert not utils.qname_qualified_by('foo.bar', 'foo.baz')
+
     assert utils.qname_merge('foo.bar.baz', 'baz.quux') == 'foo.bar.baz.quux'
     assert utils.qname_merge('foo.bar.baz', 'baz.bar') == 'foo.bar.baz.bar'
     assert utils.qname_merge('foo.bar.baz', '') == 'foo.bar.baz'
@@ -23,3 +29,4 @@ def test_qname():
     assert utils.qname_merge('foo', 'foo') == 'foo'
     assert utils.qname_merge('foo', 'foo.bar') == 'foo.bar'
     assert utils.qname_merge('foo.bar', 'foo') == 'foo.bar.foo'
+    assert utils.qname_merge('foo.bar', 'foo', accept_disjoint=False) is None
