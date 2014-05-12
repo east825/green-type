@@ -46,6 +46,30 @@ def module2path(module_name):
     raise ValueError('Unresolved module: name={!r}'.format(module_name))
 
 
+def index_module_by_path(path):
+    try:
+        module_name = path2module(path)
+    except ValueError as e:
+        LOG.warning(e)
+        return None
+    loaded = Indexer.MODULE_INDEX.get(module_name)
+    if loaded:
+        return loaded
+    return SourceModuleIndexer(path).run()
+
+
+def index_module_by_name(name):
+    loaded = Indexer.MODULE_INDEX.get(name)
+    if loaded:
+        return loaded
+    try:
+        path = module2path(name)
+    except ValueError as e:
+        LOG.warning(e)
+        return None
+    return SourceModuleIndexer(path).run()
+
+
 class Definition(object):
     def __init__(self, qname, node):
         self.qname = qname
@@ -72,10 +96,14 @@ class Definition(object):
 
 
 class ModuleDefinition(Definition):
-    def __init__(self, qname, node, path, top_level_imports):
+    def __init__(self, qname, node, path, imports):
         super().__init__(qname, node)
         self.path = path
-        self.imports = top_level_imports
+        # top-level imports
+        self.imports = imports
+        # top-level definitions
+        # they are used mainly to handle 'from .submodule import *' in __init__.py
+        self.definitions = {}
 
     def __str__(self):
         return 'module {} at {!r}'.format(self.qname, self.path)
@@ -220,6 +248,13 @@ class Indexer(object):
     def register_module(self, module_def):
         Indexer.MODULE_INDEX[module_def.qname] = module_def
 
+    def register(self, definition):
+        if isinstance(definition, ClassDefinition):
+            self.register_class(definition)
+        elif isinstance(definition, FunctionDefinition):
+            self.register_function(definition)
+        raise TypeError('Unknown definition: {}'.format(definition))
+
     def collect_class_attributes(self, class_def):
         return class_def.attributes
 
@@ -229,6 +264,7 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
         super().__init__()
         self.module_path = path
         self.scopes_stack = []
+        self.module_def = None
         self.depth = 0
         self.root = None
 
@@ -238,12 +274,19 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
             return self.scopes_stack[-1].qname + '.' + node_name
         return node_name
 
-    def run(self):
-        LOG.debug('Analyzing module %r', self.module_path)
+    def run(self, recursively=True):
+        if path2module(self.module_path) in Indexer.MODULE_INDEX:
+            return
+
+        LOG.debug('Indexing module %r', self.module_path)
         with open(self.module_path) as f:
             self.root = ast.parse(f.read(), self.module_path)
         ast_utils.interlink_ast(self.root)
         self.visit(self.root)
+        if recursively and self.module_def:
+            self.analyze_imports(self.module_def)
+        return self.module_def
+
 
     def visit(self, node):
         self.depth += 1
@@ -298,9 +341,8 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
                 elif package:
                     target_module = package
                 else:
-                    raise Exception(
-                        'Malformed ImportFrom statement: file={!r} module={}, level={}'.format(
-                            self.module_path, child.module, child.level))
+                    raise Exception('Malformed ImportFrom statement: file={!r} module={}, level={}'.format(
+                        self.module_path, child.module, child.level))
                 for alias in child.names:
                     if alias.name == '*':
                         imports.append(Import(target_module, alias.asname, True, True))
@@ -338,7 +380,17 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
         class_attributes = ClassAttributeCollector().collect(node)
         class_def = ClassDefinition(class_name, node, self.module_def, bases_names, class_attributes)
         self.register_class(class_def)
+        self.add_definition(class_def)
         return class_def
+
+    def add_definition(self, definition):
+        if self.module_def:
+            qualifier = utils.qname_tail(definition.qname)
+            short_name = utils.qname_head(definition.qname)
+            # is top level definition
+            if qualifier == self.module_def.qname:
+                self.module_def.definitions[short_name] = definition
+
 
     def function_discovered(self, node):
         func_name = self.qualified_name(node)
@@ -354,7 +406,31 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
 
         func_def = FunctionDefinition(func_name, node, self.module_def, parameters)
         self.register_function(func_def)
+        self.add_definition(func_def)
         return func_def
+
+    def analyze_imports(self, module_def):
+        for imp in module_def.imports:
+            if not imp.import_from:
+                index_module_by_name(imp.imported_name)
+            elif not imp.star_import:
+                module_name = utils.qname_tail(imp.imported_name)
+                imported_def_name = utils.qname_head(imp.imported_name)
+                index_module_by_name(module_name)
+                module = Indexer.MODULE_INDEX.get(module_name)
+                if module:
+                    definition = module.definitions.get(imported_def_name)
+                    # self.register(definition)
+                    if definition:
+                        module_def.definitions[imported_def_name] = definition
+            else:
+                module_name = imp.imported_name
+                index_module_by_name(module_name)
+                module = Indexer.MODULE_INDEX.get(module_name)
+                if module:
+                    module_def.definitions.update(module.definitions)
+                    # for definition in module.defintions:
+                    # self.register(definition)
 
 
 class ReflectiveModuleIndexer(Indexer):
@@ -402,6 +478,20 @@ class Statistic(object):
     def total_parameters(self):
         return len(Indexer.PARAMETERS_INDEX)
 
+    def _definitions_under_path(self, definitions, path):
+        result = []
+        for definition in definitions:
+            if definition.module and definition.module.path.startswith(path):
+                result.append(definition)
+        return result
+
+    def _definitions_under_qualifier(self, definitions, qualifier):
+        result = []
+        for definition in definitions:
+            if definition.qname.startswith(qualifier):
+                result.append(definition)
+        return result
+
     def attributeless_params(self):
         return [p for p in Indexer.PARAMETERS_INDEX.values() if not p.attributes]
 
@@ -422,7 +512,7 @@ class Statistic(object):
     def top_parameters_with_scattered_types(self, n):
         return heapq.nlargest(n, self.scattered_parameters(), key=lambda x: len(x.suggested_types))
 
-    def format(self):
+    def format(self, target=None):
         formatted = ''
         if self.show_total:
             formatted += 'Total indexed: {} classes with {} attributes, ' \
@@ -459,11 +549,23 @@ class Statistic(object):
                 prefix_func=lambda x: '{:3} types'.format(len(x.suggested_types))
             )
         if self.dump_classes:
-            formatted += self._format_list(header='Classes:', items=Indexer.CLASS_INDEX.values())
+            if target:
+                classes = self._definitions_under_qualifier(Indexer.CLASS_INDEX.values(), target)
+            else:
+                classes = Indexer.CLASS_INDEX.values()
+            formatted += self._format_list(header='Classes:', items=classes)
         if self.dump_functions:
-            formatted += self._format_list(header='Functions:', items=Indexer.FUNCTION_INDEX.values())
+            if target:
+                functions = self._definitions_under_qualifier(Indexer.FUNCTION_INDEX.values(), target)
+            else:
+                functions = Indexer.FUNCTION_INDEX.values()
+            formatted += self._format_list(header='Functions:', items=functions)
         if self.dump_params:
-            formatted += self._format_list(header='Parameters:', items=Indexer.PARAMETERS_INDEX.values())
+            if target:
+                parameters = self._definitions_under_qualifier(Indexer.PARAMETERS_INDEX.values(), target)
+            else:
+                parameters = Indexer.PARAMETERS_INDEX.values()
+            formatted += self._format_list(header='Parameters:', items=parameters)
         return formatted
 
     def __str__(self):

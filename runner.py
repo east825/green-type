@@ -1,4 +1,3 @@
-import unittest
 import functools
 import os
 import logging
@@ -7,8 +6,9 @@ import sys
 import time
 
 from greentype import core
+
 from greentype import utils
-from greentype.core import Statistic
+from greentype.core import Statistic, index_module_by_path
 
 
 root_logger = logging.getLogger()
@@ -27,21 +27,6 @@ root_logger.addHandler(console_info)
 LOG = logging.getLogger(__name__)
 
 
-def analyze_module(path):
-    core.SourceModuleIndexer(path).run()
-
-
-def load_module(module_name):
-    if module_name in core.Indexer.MODULE_INDEX:
-        return True
-    try:
-        path = core.module2path(module_name)
-        analyze_module(path)
-        return True
-    except ValueError:
-        LOG.warning('Cannot find module for name %r', module_name)
-        return False
-
 
 def suggest_classes(struct_type):
     def unite(sets):
@@ -52,16 +37,28 @@ def suggest_classes(struct_type):
             return {}
         return functools.reduce(set.intersection, sets)
 
+    def load_module(module_name):
+        try:
+            return index_module_by_path(core.module2path(module_name))
+        except ValueError:
+            LOG.warning('Cannot find module for name %r', module_name)
+        return None
+
+
     @utils.memo
     def resolve_bases(class_def):
         LOG.debug('Resolving bases for %r', class_def.qname)
         bases = set()
 
-        def check_class_loaded(name):
-            if name in core.Indexer.CLASS_INDEX:
-                found_base = core.Indexer.CLASS_INDEX[name]
-                bases.add(found_base)
-                bases.update(resolve_bases(found_base))
+        def check_class_loaded(qname, module=None):
+            class_def = core.Indexer.CLASS_INDEX.get(qname)
+            # check amongst imported definitions of module
+            if not class_def and module:
+                short_name = utils.qname_head(qname)
+                class_def = module.definitions.get(short_name)
+            if class_def:
+                bases.add(class_def)
+                bases.update(resolve_bases(class_def))
                 return True
             return False
 
@@ -75,7 +72,7 @@ def suggest_classes(struct_type):
             if module:
                 # name defined in the same module
                 base_qname = module.qname + '.' + ref
-                if check_class_loaded(base_qname):
+                if check_class_loaded(base_qname, module):
                     continue
                 # name is imported
                 for imp in module.imports:
@@ -90,35 +87,33 @@ def suggest_classes(struct_type):
                         # >>> from some.module import Base as alias
                         # index some.module, then check some.module.Base
                         # if not found index some.module.Base, then check some.module.Base again
-                        if check_class_loaded(base_qname):
+                        if check_class_loaded(base_qname, module):
                             break
 
                         if not imp.import_from:
-                            if load_module(imp.imported_name):
-                                if not check_class_loaded(base_qname):
-                                    LOG.info('Module %r referenced as "import %r" in %r loaded '
+                            module_loaded = load_module(imp.imported_name)
+                            if module_loaded:
+                                if not check_class_loaded(base_qname, module_loaded):
+                                    LOG.info('Module %r referenced as "import %s" in %r loaded '
                                              'successfully, but class %r not found',
                                              imp.imported_name, imp.imported_name, module.path, base_qname)
                         elif imp.star_import:
-                            if load_module(imp.imported_name):
-                                # if it's not found: try other imports
-                                if check_class_loaded(base_qname):
-                                    break
+                            module_loaded = load_module(imp.imported_name)
+                            if module_loaded and check_class_loaded(base_qname, module_loaded):
+                                break
                         else:
                             # first, interpret import as 'from module import Name'
-                            if load_module(utils.qname_tail(imp.imported_name)):
-                                if check_class_loaded(base_qname):
-                                    break
+                            module_loaded = load_module(utils.qname_tail(imp.imported_name))
+                            if module_loaded and check_class_loaded(base_qname, module_loaded):
+                                break
                             # then, as 'from package import module'
-                            if load_module(imp.imported_name):
-                                if check_class_loaded(base_qname):
-                                    break
-                                else:
-                                    LOG.info('Module %r referenced as "from %r import %r" in %r loaded '
-                                             'successfully, but class %r not found',
-                                             imp.imported_name, utils.qname_tail(imp.imported_name),
-                                             utils.qname_head(imp.imported_name), module.path,
-                                             base_qname)
+                            module_loaded = load_module(imp.imported_name)
+                            if module_loaded and not check_class_loaded(base_qname, module_loaded):
+                                LOG.info('Module %r referenced as "from %s import %s" in %r loaded '
+                                         'successfully, but class %r not found',
+                                         imp.imported_name, utils.qname_tail(imp.imported_name),
+                                         utils.qname_head(imp.imported_name), module.path,
+                                         base_qname)
 
             else:
                 LOG.warning('Base class %r of %r not found', class_def.qname, base_qname)
@@ -147,11 +142,11 @@ def suggest_classes(struct_type):
     return suitable_classes
 
 
-def analyze(path):
+def analyze(path, target):
     if os.path.isfile(path):
         if not utils.is_python_source_module(path):
             raise ValueError('Not a Python module {!r} (should end with .py).'.format(path))
-        analyze_module(path)
+        index_module_by_path(path)
     elif os.path.isdir(path):
         for dirpath, dirnames, filenames in os.walk(path):
             for name in dirnames:
@@ -164,7 +159,7 @@ def analyze(path):
                 abs_path = os.path.abspath(os.path.join(dirpath, name))
                 if not utils.is_python_source_module(abs_path):
                     continue
-                analyze_module(abs_path)
+                index_module_by_path(abs_path)
 
     core.ReflectiveModuleIndexer('builtins').run()
     start_time = time.process_time()
@@ -175,13 +170,13 @@ def analyze(path):
             structural_type = core.StructuralType(param.attributes)
             param.suggested_types = suggest_classes(structural_type)
     LOG.debug('Stopped inferring: %fs spent\n', time.process_time() - start_time)
-    print(Statistic())
+    print(Statistic(dump_params=True).format(target=target))
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--src-roots',
-                        help='Sources roots separated by colon. Used to resolve module names in project.')
+    parser.add_argument('--src-roots', help='Sources roots separated by colon.')
+    parser.add_argument('--target', help='Target qualifier to restrict output.')
     parser.add_argument('-v', '--verbose', action='store_true', help='Enable DEBUG logging.')
     parser.add_argument('path', help='Path to single Python module or directory.')
     args = parser.parse_args()
@@ -201,7 +196,7 @@ def main():
                 raise ValueError('Unrecognized target {!r}. Should be either file or directory.'.format(target_path))
         else:
             core.SRC_ROOTS.extend(args.src_roots.split(':'))
-        analyze(target_path)
+        analyze(target_path, args.target)
     except Exception as e:
         LOG.exception(e)
 
