@@ -1,17 +1,19 @@
 import ast
+import functools
 import heapq
 import importlib
 import inspect
 import logging
 from collections import defaultdict
 from contextlib import contextmanager
-
-from . import ast_utils
-from . import utils
 import itertools
 import os
 import sys
 import textwrap
+
+from . import ast_utils
+from greentype import utils
+
 
 LOG = logging.getLogger(__name__)
 
@@ -416,8 +418,7 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
             elif not imp.star_import:
                 module_name = utils.qname_tail(imp.imported_name)
                 imported_def_name = utils.qname_head(imp.imported_name)
-                index_module_by_name(module_name)
-                module = Indexer.MODULE_INDEX.get(module_name)
+                module = index_module_by_name(module_name)
                 if module:
                     definition = module.definitions.get(imported_def_name)
                     # self.register(definition)
@@ -425,8 +426,7 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
                         module_def.definitions[imported_def_name] = definition
             else:
                 module_name = imp.imported_name
-                index_module_by_name(module_name)
-                module = Indexer.MODULE_INDEX.get(module_name)
+                module = index_module_by_name(module_name)
                 if module:
                     module_def.definitions.update(module.definitions)
                     # for definition in module.defintions:
@@ -597,3 +597,131 @@ class Statistic(object):
                 blocks.append(textwrap.indent(item_text, indent))
         formatted += '\n'.join(blocks)
         return formatted + '\n'
+
+
+@utils.memo
+def resolve_name(name, module, type):
+    """Resolve name using indexes and following import if it's necessary."""
+
+    def check_loaded(qname, module=None):
+        if type is ClassDefinition:
+            definition = Indexer.CLASS_INDEX.get(qname)
+        else:
+            definition = Indexer.FUNCTION_INDEX.get(qname)
+        # check amongst imported definitions of module
+        if not definition and module:
+            short_name = utils.qname_head(qname)
+            qualifier = utils.qname_tail(qname)
+            if module.qname == qualifier:
+                definition = module.definitions.get(short_name)
+        return definition
+
+    df = check_loaded(name)
+    if df:
+        return df
+
+    # not built-in
+    if module:
+        # name defined in the same module
+        qname = module.qname + '.' + name
+        df = check_loaded(qname, module)
+        if df:
+            return df
+        # name is imported
+        for imp in module.imports:
+            if imp.imports_name(name):
+                qname = utils.qname_merge(imp.local_name, name)
+                # TODO: more robust qualified name handling
+                qname = qname.replace(imp.local_name, imp.imported_name, 1)
+                # Case 1:
+                # >>> import some.module as alias
+                # index some.module, then check some.module.Base
+                # Case 2:
+                # >>> from some.module import Base as alias
+                # index some.module, then check some.module.Base
+                # if not found index some.module.Base, then check some.module.Base again
+                df = check_loaded(qname, module)
+                if df:
+                    return df
+
+                if not imp.import_from:
+                    module_loaded = index_module_by_name(imp.imported_name)
+                    if module_loaded:
+                        df = check_loaded(qname, module_loaded)
+                        if df:
+                            return df
+                        LOG.info('Module %r referenced as "import %s" in %r loaded '
+                                 'successfully, but class %r not found',
+                                 imp.imported_name, imp.imported_name, module.path, qname)
+                elif imp.star_import:
+                    module_loaded = index_module_by_name(imp.imported_name)
+                    if module_loaded:
+                        df = check_loaded(qname, module_loaded)
+                        if df:
+                            return df
+                else:
+                    # first, interpret import as 'from module import Name'
+                    module_loaded = index_module_by_name(utils.qname_tail(imp.imported_name))
+                    if module_loaded:
+                        df = check_loaded(qname, module_loaded)
+                        if df:
+                            return df
+                    # then, as 'from package import module'
+                    module_loaded = index_module_by_name(imp.imported_name)
+                    if module_loaded:
+                        df = check_loaded(qname, module_loaded)
+                        if df:
+                            return df
+                        LOG.info('Module %r referenced as "from %s import %s" in %r loaded '
+                                 'successfully, but class %r not found',
+                                 imp.imported_name, utils.qname_tail(imp.imported_name),
+                                 utils.qname_head(imp.imported_name), module.path,
+                                 qname)
+
+    LOG.warning('Cannot resolve name %r in module %r', name, module or '<undefined>')
+
+
+@utils.memo
+def resolve_bases(class_def):
+    LOG.debug('Resolving bases for %r', class_def.qname)
+    bases = set()
+
+    for name in class_def.bases:
+        # fully qualified name or built-in
+        base_def = resolve_name(name, class_def.module, ClassDefinition)
+        if base_def:
+            bases.add(base_def)
+            bases.update(resolve_bases(base_def))
+        else:
+            LOG.warning('Base class %r of %r not found', name, class_def.qname)
+    return bases
+
+
+def suggest_classes_by_attributes(accessed_attrs):
+    def unite(sets):
+        return functools.reduce(set.union, sets, set())
+
+    def intersect(sets):
+        if not sets:
+            return {}
+        return functools.reduce(set.intersection, sets)
+
+    class_pool = {attr: Indexer.CLASS_ATTRIBUTE_INDEX[attr] for attr in accessed_attrs}
+    if not class_pool:
+        return set()
+    with_all_attributes = intersect(class_pool.values())
+    with_any_attribute = unite(class_pool.values())
+
+    suitable_classes = set(with_all_attributes)
+    for class_def in with_any_attribute - with_all_attributes:
+        bases = resolve_bases(class_def)
+        all_attrs = unite(b.attributes for b in bases) | class_def.attributes
+        if accessed_attrs <= all_attrs:
+            suitable_classes.add(class_def)
+
+    # remove subclasses if their superclasses is suitable also
+    for class_def in suitable_classes.copy():
+        if any(base in suitable_classes for base in resolve_bases(class_def)):
+            suitable_classes.remove(class_def)
+
+    return suitable_classes
