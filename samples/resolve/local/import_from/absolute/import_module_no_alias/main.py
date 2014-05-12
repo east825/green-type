@@ -1,6 +1,6 @@
-from module_b import B
+from package import module
 
-class A(B):
+class A(module.B):
     def foo(self):
         pass
 

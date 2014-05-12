@@ -1,6 +1,6 @@
-import module_b as m
+from module import B as Base
 
-class A(m.B):
+class A(Base):
     def foo(self):
         pass
 

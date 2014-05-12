@@ -51,13 +51,16 @@ def suggest_classes(struct_type):
             return {}
         return functools.reduce(set.intersection, sets)
 
-    # @utils.memo
+    @utils.memo
     def resolve_bases(class_def):
+        LOG.debug('Resolving bases for %r', class_def.qname)
         bases = set()
 
         def check_class_loaded(name):
             if name in core.Indexer.CLASS_INDEX:
-                bases.add(core.Indexer.CLASS_INDEX[name])
+                found_base = core.Indexer.CLASS_INDEX[name]
+                bases.add(found_base)
+                bases.update(resolve_bases(found_base))
                 return True
             return False
 
@@ -106,7 +109,7 @@ def suggest_classes(struct_type):
                                 if check_class_loaded(base_qname):
                                     break
                             # then, as 'from package import module'
-                            elif load_module(imp.imported_name):
+                            if load_module(imp.imported_name):
                                 if check_class_loaded(base_qname):
                                     break
                                 else:
@@ -166,7 +169,8 @@ def analyze(path):
     core.ReflectiveModuleIndexer('builtins').run()
     start_time = time.process_time()
     LOG.debug('Started inferring parameter types')
-    for func in core.Indexer.FUNCTION_INDEX.values():
+    # TODO: analyze newly found functions as well
+    for func in set(core.Indexer.FUNCTION_INDEX.values()):
         for param in func.parameters:
             structural_type = core.StructuralType(param.attributes)
             param.suggested_types = suggest_classes(structural_type)

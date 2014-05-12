@@ -86,11 +86,11 @@ class Import(object):
         assert not (star_import and not import_from)
         self.imported_name = imported_name
         self.local_name = local_name if local_name else imported_name
-        self.star = star_import
+        self.star_import = star_import
         self.import_from = import_from
 
     def imports_name(self, name, star_imports=False):
-        if self.star and star_imports:
+        if self.star_import and star_imports:
             return True
         return name.startswith(self.local_name)
 
@@ -284,8 +284,10 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
                     imports.append(Import(alias.name, alias.asname, False))
             elif isinstance(child, ast.ImportFrom):
                 if child.level:
-                    path_components = self.module_path.split(os.path.sep)
-                    package_path = os.path.join(*path_components[:-child.level])
+                    package_path = self.module_path
+                    # correctly handle absolute/relative names, drives etc.
+                    for _ in range(child.level):
+                        package_path = os.path.dirname(package_path)
                     package = path2module(package_path)
                 else:
                     package = ''
