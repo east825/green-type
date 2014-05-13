@@ -1,9 +1,17 @@
-from collections.abc import Iterable
+from __future__ import unicode_literals, print_function
+
 import functools
 import os
 import contextlib
 import traceback
+import sys
 
+PY2 = sys.version_info.major == 2
+
+if PY2:
+    from collections import Iterable
+else:
+    from collections.abc import Iterable
 
 def is_collection(x):
     return isinstance(x, Iterable) and not isinstance(x, (str, bytes))
@@ -23,8 +31,9 @@ def partition_any(s, separators, from_end=False):
 
 
 def qname_merge(n1, n2, accept_disjoint=True):
-    parts1 = n1.split(sep='.')
-    parts2 = n2.split(sep='.')
+    # Do not use sep='.' for Python 2.x compatibility!
+    parts1 = n1.split('.')
+    parts2 = n2.split('.')
     if not n1 or not n2:
         return n2 or n1
     for n in range(len(parts2), 0, -1):
@@ -99,5 +108,16 @@ def suppress_exceptions():
         yield
     except Exception:
         traceback.print_exc()
+
+
+def indent(s, indent):
+    import textwrap
+
+    if hasattr(textwrap, 'indent'):
+        return textwrap.indent(s, indent)
+    lines = s.splitlines(True)
+    return ''.join(indent + line for line in lines)
+
+
 
 

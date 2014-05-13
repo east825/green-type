@@ -1,3 +1,5 @@
+from __future__ import unicode_literals, print_function
+
 import os
 import logging
 import argparse
@@ -5,7 +7,6 @@ import time
 import sys
 
 from greentype import core
-from greentype.core import PY2
 from greentype import utils
 
 

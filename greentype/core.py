@@ -1,3 +1,4 @@
+from __future__ import unicode_literals, print_function, division
 import ast
 import functools
 import heapq
@@ -14,8 +15,7 @@ import textwrap
 from . import ast_utils
 from greentype import utils
 
-PY2 = sys.version_info.major == 2
-BUILTINS = '__builtin__' if PY2 else 'builtins'
+BUILTINS = '__builtin__' if utils.PY2 else 'builtins'
 
 LOG = logging.getLogger(__name__)
 
@@ -102,7 +102,7 @@ class Definition(object):
 
 class ModuleDefinition(Definition):
     def __init__(self, qname, node, path, imports):
-        super().__init__(qname, node)
+        super(ModuleDefinition, self).__init__(qname, node)
         self.path = path
         # top-level imports
         self.imports = imports
@@ -130,7 +130,7 @@ class Import(object):
 
 class ClassDefinition(Definition):
     def __init__(self, qname, node, module, bases, attributes):
-        super().__init__(qname, node)
+        super(ClassDefinition, self).__init__(qname, node)
         self.module = module
         self.bases = bases
         self.attributes = attributes
@@ -141,7 +141,7 @@ class ClassDefinition(Definition):
 
 class FunctionDefinition(Definition):
     def __init__(self, qname, node, module, parameters):
-        super().__init__(qname, node)
+        super(FunctionDefinition, self).__init__(qname, node)
         self.module = module
         self.parameters = parameters
 
@@ -187,6 +187,10 @@ class StructuralType(object):
 class AttributesCollector(ast.NodeVisitor):
     """Collect accessed attributes for specified qualifier."""
 
+    def __init__(self):
+        super(AttributesCollector, self).__init__()
+        self.attributes = set()
+
     def collect(self, node):
         self.attributes = set()
         self.visit(node)
@@ -197,7 +201,7 @@ class AttributesCollector(ast.NodeVisitor):
             for stmt in node:
                 self.visit(stmt)
         else:
-            super().visit(node)
+            super(AttributesCollector, self).visit(node)
 
 
 class SimpleAttributesCollector(AttributesCollector):
@@ -208,7 +212,7 @@ class SimpleAttributesCollector(AttributesCollector):
     """
 
     def __init__(self, name, read_only=True):
-        super().__init__()
+        super(SimpleAttributesCollector, self).__init__()
         self.name = name
         self.read_only = read_only
 
@@ -266,7 +270,7 @@ class Indexer(object):
 
 class SourceModuleIndexer(Indexer, ast.NodeVisitor):
     def __init__(self, path):
-        super().__init__()
+        super(SourceModuleIndexer, self).__init__()
         self.module_path = path
         self.scopes_stack = []
         self.module_def = None
@@ -292,11 +296,10 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
             self.analyze_imports(self.module_def, recursively)
         return self.module_def
 
-
     def visit(self, node):
         self.depth += 1
         try:
-            super().visit(node)
+            super(SourceModuleIndexer, self).visit(node)
         finally:
             self.depth -= 1
 
@@ -396,15 +399,28 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
             if qualifier == self.module_def.qname:
                 self.module_def.definitions[short_name] = definition
 
-
     def function_discovered(self, node):
         func_name = self.qualified_name(node)
+        args = node.args
         parameters = []
-        for arg in itertools.chain(node.args.args, [node.args.vararg], node.args.kwonlyargs, [node.args.kwarg]):
+        if utils.PY2:
+            # exact order doesn't matter here
+            declared_params = args.args + [args.vararg] + [args.kwarg]
+        else:
+            declared_params = args.args + [args.vararg] + args.kwonlyargs + [args.kwarg]
+        for arg in declared_params:
             # *args and **kwargs may be None
             if arg is None:
                 continue
-            param_name = arg if isinstance(arg, str) else arg.arg
+            if isinstance(arg, str):
+                param_name = arg
+            elif utils.PY2:
+                if isinstance(arg, ast.Name):
+                    param_name = arg.id
+                else:
+                    LOG.warning('Function %s uses argument patterns. Skipped.', func_name)
+            else:
+                param_name = arg.arg
             attributes = SimpleAttributesCollector(param_name).collect(node)
             param_qname = func_name + '.' + param_name
             parameters.append(Parameter(param_qname, attributes))
@@ -441,16 +457,19 @@ class ReflectiveModuleIndexer(Indexer):
     def run(self):
         LOG.debug('Reflectively analyzing %r', self.module_name)
 
+        def name(obj):
+            return obj.__name__ if utils.PY2 else obj.__qualname__
+
         module = importlib.import_module(self.module_name, None)
         module_def = ModuleDefinition(self.module_name, None, None, ())
         for module_attr_name, module_attr in vars(module).items():
             if inspect.isclass(module_attr):
                 cls = module_attr
-                class_name = self.module_name + '.' + cls.__qualname__
-                bases = tuple(b.__qualname__ for b in cls.__bases__)
+                class_name = self.module_name + '.' + name(cls)
+                bases = tuple(name(b) for b in cls.__bases__)
                 attributes = set(dir(cls))
                 class_def = ClassDefinition(class_name, None, None, bases, attributes)
-                module_def.definitions[cls.__qualname__] = class_def
+                module_def.definitions[name(cls)] = class_def
                 self.register_class(class_def)
         self.register_module(module_def)
 
@@ -576,7 +595,6 @@ class Statistic(object):
         preferences = ', '.join('{}={}'.format(k, v) for k, v in vars(self).items())
         return 'Statistic({})'.format(preferences)
 
-
     def _format_list(self, items, header=None, prefix_func=None, indent='  '):
         formatted = '\n'
         if header is not None:
@@ -590,12 +608,12 @@ class Statistic(object):
                 first_line, remaining_lines = lines[0], lines[1:]
                 block = '{}{}'.format(prefix, first_line)
                 if remaining_lines:
-                    indented_tail = textwrap.indent('\n'.join(remaining_lines), ' ' * len(prefix))
+                    indented_tail = utils.indent('\n'.join(remaining_lines), ' ' * len(prefix))
                     blocks.append('{}\n{}'.format(block, indented_tail))
                 else:
                     blocks.append(block)
             else:
-                blocks.append(textwrap.indent(item_text, indent))
+                blocks.append(utils.indent(item_text, indent))
         formatted += '\n'.join(blocks)
         return formatted + '\n'
 
@@ -716,10 +734,10 @@ def suggest_classes_by_attributes(accessed_attrs):
     # with_all_attributes = intersect(class_pool.values())
     # suitable_classes = set(with_all_attributes)
     # for class_def in with_any_attribute - with_all_attributes:
-    #     bases = resolve_bases(class_def)
-    #     all_attrs = unite(b.attributes for b in bases) | class_def.attributes
-    #     if accessed_attrs <= all_attrs:
-    #         suitable_classes.add(class_def)
+    # bases = resolve_bases(class_def)
+    # all_attrs = unite(b.attributes for b in bases) | class_def.attributes
+    # if accessed_attrs <= all_attrs:
+    # suitable_classes.add(class_def)
 
     # More fair algorithm because it considers newly discovered bases classes as well
     suitable_classes = set()

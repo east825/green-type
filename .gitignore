@@ -2,4 +2,5 @@
 *.py[co]
 
 /env/
+/env2/
 /samples/lib
