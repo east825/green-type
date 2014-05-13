@@ -14,9 +14,12 @@ import textwrap
 from . import ast_utils
 from greentype import utils
 
+PY2 = sys.version_info.major == 2
+BUILTINS = '__builtin__' if PY2 else 'builtins'
 
 LOG = logging.getLogger(__name__)
 
+# TODO: invent something better than global mutable state
 SRC_ROOTS = []
 
 
@@ -48,7 +51,7 @@ def module2path(module_name):
     raise ValueError('Unresolved module: name={!r}'.format(module_name))
 
 
-def index_module_by_path(path):
+def index_module_by_path(path, recursively=True):
     try:
         module_name = path2module(path)
     except ValueError as e:
@@ -57,10 +60,10 @@ def index_module_by_path(path):
     loaded = Indexer.MODULE_INDEX.get(module_name)
     if loaded:
         return loaded
-    return SourceModuleIndexer(path).run()
+    return SourceModuleIndexer(path).run(recursively)
 
 
-def index_module_by_name(name):
+def index_module_by_name(name, recursively=True):
     loaded = Indexer.MODULE_INDEX.get(name)
     if loaded:
         return loaded
@@ -69,7 +72,7 @@ def index_module_by_name(name):
     except ValueError as e:
         LOG.warning(e)
         return None
-    return SourceModuleIndexer(path).run()
+    return SourceModuleIndexer(path).run(recursively)
 
 
 class Definition(object):
@@ -286,7 +289,7 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
         ast_utils.interlink_ast(self.root)
         self.visit(self.root)
         if recursively and self.module_def:
-            self.analyze_imports(self.module_def)
+            self.analyze_imports(self.module_def, recursively)
         return self.module_def
 
 
@@ -411,14 +414,14 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
         self.add_definition(func_def)
         return func_def
 
-    def analyze_imports(self, module_def):
+    def analyze_imports(self, module_def, recursively):
         for imp in module_def.imports:
             if not imp.import_from:
-                index_module_by_name(imp.imported_name)
+                index_module_by_name(imp.imported_name, recursively)
             elif not imp.star_import:
                 module_name = utils.qname_tail(imp.imported_name)
                 imported_def_name = utils.qname_head(imp.imported_name)
-                module = index_module_by_name(module_name)
+                module = index_module_by_name(module_name, recursively)
                 if module:
                     definition = module.definitions.get(imported_def_name)
                     # self.register(definition)
@@ -426,11 +429,9 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
                         module_def.definitions[imported_def_name] = definition
             else:
                 module_name = imp.imported_name
-                module = index_module_by_name(module_name)
+                module = index_module_by_name(module_name, recursively)
                 if module:
                     module_def.definitions.update(module.definitions)
-                    # for definition in module.defintions:
-                    # self.register(definition)
 
 
 class ReflectiveModuleIndexer(Indexer):
@@ -440,18 +441,18 @@ class ReflectiveModuleIndexer(Indexer):
     def run(self):
         LOG.debug('Reflectively analyzing %r', self.module_name)
 
-        def is_hidden(name):
-            return name.startswith('_')
-
         module = importlib.import_module(self.module_name, None)
+        module_def = ModuleDefinition(self.module_name, None, None, ())
         for module_attr_name, module_attr in vars(module).items():
-            if is_hidden(module_attr_name):
-                continue
             if inspect.isclass(module_attr):
-                class_name = module_attr.__qualname__
-                bases = tuple(b.__qualname__ for b in module_attr.__bases__)
-                attributes = {name for name in dir(module_attr) if not is_hidden(name)}
-                self.register_class(ClassDefinition(class_name, None, None, bases, attributes))
+                cls = module_attr
+                class_name = self.module_name + '.' + cls.__qualname__
+                bases = tuple(b.__qualname__ for b in cls.__bases__)
+                attributes = set(dir(cls))
+                class_def = ClassDefinition(class_name, None, None, bases, attributes)
+                module_def.definitions[cls.__qualname__] = class_def
+                self.register_class(class_def)
+        self.register_module(module_def)
 
 
 class Statistic(object):
@@ -616,7 +617,8 @@ def resolve_name(name, module, type):
                 definition = module.definitions.get(short_name)
         return definition
 
-    df = check_loaded(name)
+    # already properly qualified name or built-in
+    df = check_loaded(name) or check_loaded(BUILTINS + '.' + name)
     if df:
         return df
 

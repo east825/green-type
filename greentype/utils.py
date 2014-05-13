@@ -1,7 +1,8 @@
 from collections.abc import Iterable
 import functools
 import os
-import sys
+import contextlib
+import traceback
 
 
 def is_collection(x):
@@ -86,22 +87,17 @@ def camel_to_snake(s):
     return '_'.join(words)
 
 
-def module_path_to_name(path):
-    from runner import _src_roots
-
-    path = os.path.abspath(path)
-    for src_root in _src_roots + sys.path:
-        if path.startswith(src_root):
-            relative = os.path.relpath(path, src_root)
-            transformed, _ = os.path.splitext(relative)
-            dir_name, base_name = os.path.split(transformed)
-            if base_name == '__init__':
-                transformed = dir_name
-            return transformed.replace(os.path.sep, '.').strip('.')
-    raise ValueError('Unresolved module {!r}'.format(path))
-
-
 def is_python_source_module(path):
     _, ext = os.path.splitext(path)
     # importlib.machinery.SOURCE_SUFFIXES?
     return os.path.isfile(path) and ext == '.py'
+
+
+@contextlib.contextmanager
+def suppress_exceptions():
+    try:
+        yield
+    except Exception:
+        traceback.print_exc()
+
+
