@@ -10,26 +10,14 @@ from greentype import utils
 
 
 logging.basicConfig(level=logging.WARNING)
-# root_logger = logging.getLogger()
-# root_logger.setLevel(logging.DEBUG)
-#
-# console_err = logging.StreamHandler(stream=sys.stderr)
-# console_err.setLevel(logging.WARNING)
-#
-# console_info = logging.StreamHandler(stream=sys.stdout)
-# console_info.setFormatter(logging.Formatter('%(message)s'))
-# console_info.addFilter(lambda x: x.levelno < logging.WARNING)
-#
-# root_logger.addHandler(console_err)
-# root_logger.addHandler(console_info)
-
 LOG = logging.getLogger(__name__)
 
 
-def analyze(path, target, recursively):
-    print('Analysing built-in modules...')
-    for module_name in sys.builtin_module_names:
-        core.ReflectiveModuleIndexer(module_name).run()
+def analyze(path, target, recursively=True, builtins=True):
+    if builtins:
+        print('Analysing built-in modules...')
+        for module_name in sys.builtin_module_names:
+            core.ReflectiveModuleIndexer(module_name).run()
 
     print('Analyzing user modules starting from {!r}'.format(path))
     if os.path.isfile(path):
@@ -60,15 +48,18 @@ def analyze(path, target, recursively):
     for func in set(core.Indexer.FUNCTION_INDEX.values()):
         for param in func.parameters:
             param.suggested_types = core.suggest_classes_by_attributes(param.attributes)
-    print('Stopped inferring: {:.2}s spent\n'.format(time.clock() - start_time))
-    print(core.Statistic().format(target=target))
+    print('Stopped inferring: {:.2f}s spent\n'.format(time.clock() - start_time))
+    print(core.Statistic(dump_params=True).format(target=target))
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--src-roots', help='Sources roots separated by colon.')
-    parser.add_argument('-t', '--target', help='Target qualifier to restrict output.')
-    parser.add_argument('-r', '--recursively', action='store_true', help='Follow imports during indexing.')
+    parser.add_argument('-t', '--target',  help='Target qualifier to restrict output.')
+    parser.add_argument('-r', '--recursively', action='store_true',
+                        help='Follow imports during indexing.')
+    parser.add_argument('-B', '--no-builtins', action='store_true',
+                        help='Not analyze built-in modules reflectively first.')
     parser.add_argument('-v', '--verbose', action='store_true', help='Enable DEBUG logging level.')
     parser.add_argument('path', help='Path to single Python module or directory.')
     args = parser.parse_args()
@@ -91,7 +82,7 @@ def main():
                 raise ValueError('Unrecognized target {!r}. Should be either file or directory.'.format(target_path))
         else:
             core.SRC_ROOTS.extend(map(normalize, args.src_roots.split(':')))
-        analyze(target_path, args.target, args.recursively)
+        analyze(target_path, target=args.target, recursively=args.recursively, builtins=not args.no_builtins)
     except Exception as e:
         LOG.exception(e)
 

@@ -711,19 +711,36 @@ def suggest_classes_by_attributes(accessed_attrs):
     class_pool = {attr: Indexer.CLASS_ATTRIBUTE_INDEX[attr] for attr in accessed_attrs}
     if not class_pool:
         return set()
-    with_all_attributes = intersect(class_pool.values())
     with_any_attribute = unite(class_pool.values())
 
-    suitable_classes = set(with_all_attributes)
-    for class_def in with_any_attribute - with_all_attributes:
-        bases = resolve_bases(class_def)
-        all_attrs = unite(b.attributes for b in bases) | class_def.attributes
+    # with_all_attributes = intersect(class_pool.values())
+    # suitable_classes = set(with_all_attributes)
+    # for class_def in with_any_attribute - with_all_attributes:
+    #     bases = resolve_bases(class_def)
+    #     all_attrs = unite(b.attributes for b in bases) | class_def.attributes
+    #     if accessed_attrs <= all_attrs:
+    #         suitable_classes.add(class_def)
+
+    # More fair algorithm because it considers newly discovered bases classes as well
+    suitable_classes = set()
+    candidates = set(with_any_attribute)
+    checked = set()
+    while candidates:
+        candidate = candidates.pop()
+        checked.add(candidate)
+        bases = resolve_bases(candidate)
+        all_attrs = unite(b.attributes for b in bases) | candidate.attributes
         if accessed_attrs <= all_attrs:
-            suitable_classes.add(class_def)
+            suitable_classes.add(candidate)
+        for base in bases:
+            if base in candidates or base in checked:
+                continue
+            if any(attr in base.attributes for attr in accessed_attrs):
+                candidates.add(base)
 
     # remove subclasses if their superclasses is suitable also
-    for class_def in suitable_classes.copy():
-        if any(base in suitable_classes for base in resolve_bases(class_def)):
-            suitable_classes.remove(class_def)
+    for cls in suitable_classes.copy():
+        if any(base in suitable_classes for base in resolve_bases(cls)):
+            suitable_classes.remove(cls)
 
     return suitable_classes
