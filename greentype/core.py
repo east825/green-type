@@ -25,7 +25,8 @@ SRC_ROOTS = []
 
 def path2module(path):
     path = os.path.abspath(path)
-    for src_root in SRC_ROOTS + sys.path:
+    roots = SRC_ROOTS + [p for p in sys.path if p not in ('', '.', os.getcwd())]
+    for src_root in roots:
         if path.startswith(src_root):
             # TODO: check that on all way up to module correct packages with __init__ is used
             relative = os.path.relpath(path, src_root)
@@ -467,7 +468,7 @@ class ReflectiveModuleIndexer(Indexer):
                 cls = module_attr
                 class_name = self.module_name + '.' + name(cls)
                 bases = tuple(name(b) for b in cls.__bases__)
-                attributes = set(dir(cls))
+                attributes = set(vars(cls))
                 class_def = ClassDefinition(class_name, None, None, bases, attributes)
                 module_def.definitions[name(cls)] = class_def
                 self.register_class(class_def)
@@ -532,6 +533,9 @@ class Statistic(object):
     def top_parameters_with_scattered_types(self, n):
         return heapq.nlargest(n, self.scattered_parameters(), key=lambda x: len(x.suggested_types))
 
+    def top_parameters_with_unresolved_types(self, n):
+        return [p for p in Indexer.PARAMETERS_INDEX.values() if p.attributes and not p.suggested_types][:n]
+
     def format(self, target=None):
         formatted = ''
         if self.show_total:
@@ -567,6 +571,12 @@ class Statistic(object):
                 header='Parameters with scattered type (top {}):'.format(self.top_size),
                 items=self.top_parameters_with_scattered_types(self.top_size),
                 prefix_func=lambda x: '{:3} types'.format(len(x.suggested_types))
+            )
+
+            formatted += self._format_list(
+                header='Parameters accessed with attributes, '
+                       'but with no suggested classes (first {})'.format(self.top_size),
+                items=self.top_parameters_with_unresolved_types(self.top_size)
             )
         if self.dump_classes:
             if target:
