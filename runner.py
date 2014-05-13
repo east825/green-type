@@ -50,7 +50,7 @@ def analyze(path, target, recursively=True, builtins=True):
         for param in func.parameters:
             param.suggested_types = core.suggest_classes_by_attributes(param.attributes)
     print('Stopped inferring: {:.2f}s spent\n'.format(time.clock() - start_time))
-    print(core.Statistic(dump_params=True).format(target=target))
+    print(core.Statistic().format(target=target))
 
 
 def main():

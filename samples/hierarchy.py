@@ -13,6 +13,10 @@ class B(dict):
 
 class C(B):
     def bar(self):
+        x = self.foo + 42
+        if not self:
+            pass
+        function(self)
         pass
 
 

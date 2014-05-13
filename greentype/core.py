@@ -118,14 +118,15 @@ class ModuleDefinition(Definition):
 class Import(object):
     def __init__(self, imported_name, local_name, import_from, star_import=False):
         assert not (star_import and not import_from)
+        assert not (local_name is None and not star_import)
         self.imported_name = imported_name
-        self.local_name = local_name if local_name else imported_name
+        self.local_name = local_name
         self.star_import = star_import
         self.import_from = import_from
 
-    def imports_name(self, name, star_imports=False):
-        if self.star_import and star_imports:
-            return True
+    def imports_name(self, name):
+        if self.star_import:
+            return False
         return utils.qname_qualified_by(name, self.local_name)
 
 
@@ -162,6 +163,8 @@ class Parameter(object):
         self.qname = qname
         self.attributes = attributes
         self.suggested_types = set()
+        self.passed_as_argument = 0
+        self.used_in_expression = 0
 
     @property
     def name(self):
@@ -187,10 +190,6 @@ class StructuralType(object):
 
 class AttributesCollector(ast.NodeVisitor):
     """Collect accessed attributes for specified qualifier."""
-
-    def __init__(self):
-        super(AttributesCollector, self).__init__()
-        self.attributes = set()
 
     def collect(self, node):
         self.attributes = set()
@@ -233,6 +232,46 @@ class SimpleAttributesCollector(AttributesCollector):
                     self.attributes.add('__setitem__')
                 elif isinstance(node.ctx, ast.Del):
                     self.attributes.add('__delitem__')
+
+class UsagesCollector(AttributesCollector):
+
+    def __init__(self, name):
+        super(UsagesCollector, self).__init__()
+        self.name = name
+
+    def collect(self, node):
+        self.passed_as_argument = 0
+        self.used_in_expression = 0
+        self.visit(node)
+        return self.passed_as_argument, self.used_in_expression
+
+    def _ref_count(self, name, node):
+        if not isinstance(node, ast.AST) or isinstance(node, (ast.Attribute, ast.Subscript)):
+            return 0
+        if isinstance(node, ast.Name) and node.id == name:
+            return 1
+        return sum(self._ref_count(name, child) for child in ast.iter_child_nodes(node))
+
+    def visit_Call(self, node):
+        arguments = node.args + [kw.value for kw in node.keywords]
+        if node.starargs:
+            arguments.append(node.starargs)
+        if node.kwargs:
+            arguments.append(node.kwargs)
+        for expr in arguments:
+            if isinstance(expr, ast.Name) and expr.id == self.name:
+                self.passed_as_argument += 1
+
+        self.generic_visit(node)
+
+    def visit_BinOp(self, node):
+        self.used_in_expression += self._ref_count(self.name, node)
+        self.generic_visit(node)
+
+    def visit_UnaryOp(self, node):
+        self.used_in_expression += self._ref_count(self.name, node)
+        self.generic_visit(node)
+
 
 
 class Indexer(object):
@@ -333,7 +372,7 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
         for child in ast.iter_child_nodes(node):
             if isinstance(child, ast.Import):
                 for alias in child.names:
-                    imports.append(Import(alias.name, alias.asname, False))
+                    imports.append(Import(alias.name, alias.asname or alias.name, False))
             elif isinstance(child, ast.ImportFrom):
                 if child.level:
                     package_path = self.module_path
@@ -354,7 +393,7 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
                         self.module_path, child.module, child.level))
                 for alias in child.names:
                     if alias.name == '*':
-                        imports.append(Import(target_module, alias.asname, True, True))
+                        imports.append(Import(target_module, None, True, True))
                     else:
                         imported_name = '{}.{}'.format(target_module, alias.name)
                         imports.append(Import(imported_name, alias.asname or alias.name, True, False))
@@ -424,7 +463,9 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
                 param_name = arg.arg
             attributes = SimpleAttributesCollector(param_name).collect(node)
             param_qname = func_name + '.' + param_name
-            parameters.append(Parameter(param_qname, attributes))
+            param = Parameter(param_qname, attributes)
+            param.passed_as_argument, param.used_in_expression = UsagesCollector(param_name).collect(node)
+            parameters.append(param)
 
         func_def = FunctionDefinition(func_name, node, self.module_def, parameters)
         self.register_function(func_def)
@@ -533,8 +574,24 @@ class Statistic(object):
     def top_parameters_with_scattered_types(self, n):
         return heapq.nlargest(n, self.scattered_parameters(), key=lambda x: len(x.suggested_types))
 
-    def top_parameters_with_unresolved_types(self, n):
-        return [p for p in Indexer.PARAMETERS_INDEX.values() if p.attributes and not p.suggested_types][:n]
+    def sample_parameters_with_unresolved_types(self, n):
+        # [p for p in Indexer.PARAMETERS_INDEX.values() if p.attributes and not p.suggested_types][:n]
+        result = []
+        for param in Indexer.PARAMETERS_INDEX.values():
+            if param.attributes and not param.suggested_types:
+                result.append(param)
+            if len(result) > n:
+                break
+        return result
+
+    def sample_parameters_not_used_anywhere(self, n):
+        result = []
+        for param in Indexer.PARAMETERS_INDEX.values():
+            if not param.attributes and not (param.passed_as_argument or param.used_in_expression):
+                result.append(param)
+            if len(result) > n:
+                break
+        return result
 
     def format(self, target=None):
         formatted = ''
@@ -554,16 +611,19 @@ class Statistic(object):
 
         if self.show_param_types:
             total_params = len(Indexer.PARAMETERS_INDEX)
-            total_attributeless = len(self.attributeless_params())
+            attributeless_params = self.attributeless_params()
+            total_attributeless = len(attributeless_params)
             total_undefined = len(self.undefined_parameters())
             total_scattered = len(self.scattered_parameters())
             formatted += textwrap.dedent("""
             Parameters statistic:
-              {:3} ({:.2%}) parameters has no attributes,
+              {:3} ({:.2%}) parameters has no attributes ({:.2%} used in expressions, {:.2%} passed in other function),
               {:3} ({:.2%}) parameters has unknown type,
               {:3} ({:.2%}) parameters has scattered types
             """.format(
                 total_attributeless, (total_attributeless / total_params),
+                sum(p.used_in_expression > 0 for p in attributeless_params) / total_attributeless,
+                sum(p.passed_as_argument > 0 for p in attributeless_params) / total_attributeless,
                 total_undefined, (total_undefined / total_params),
                 total_scattered, (total_scattered / total_params)))
 
@@ -574,9 +634,15 @@ class Statistic(object):
             )
 
             formatted += self._format_list(
-                header='Parameters accessed with attributes, '
+                header='Parameters with accessed attributes, '
                        'but with no suggested classes (first {})'.format(self.top_size),
-                items=self.top_parameters_with_unresolved_types(self.top_size)
+                items=self.sample_parameters_with_unresolved_types(self.top_size)
+            )
+
+            formatted += self._format_list(
+                header='Parameters that have no attributes and not used '
+                       'elsewhere (first {})'.format(self.top_size),
+                items=self.sample_parameters_not_used_anywhere(self.top_size)
             )
         if self.dump_classes:
             if target:
@@ -609,22 +675,25 @@ class Statistic(object):
         formatted = '\n'
         if header is not None:
             formatted += '{}\n'.format(header)
-        blocks = []
-        for item in items:
-            item_text = str(item)
-            if prefix_func is not None:
-                prefix = '{}{} : '.format(indent, prefix_func(item))
-                lines = item_text.splitlines()
-                first_line, remaining_lines = lines[0], lines[1:]
-                block = '{}{}'.format(prefix, first_line)
-                if remaining_lines:
-                    indented_tail = utils.indent('\n'.join(remaining_lines), ' ' * len(prefix))
-                    blocks.append('{}\n{}'.format(block, indented_tail))
+        if not items:
+            formatted += indent + 'none'
+        else:
+            blocks = []
+            for item in items:
+                item_text = str(item)
+                if prefix_func is not None:
+                    prefix = '{}{} : '.format(indent, prefix_func(item))
+                    lines = item_text.splitlines()
+                    first_line, remaining_lines = lines[0], lines[1:]
+                    block = '{}{}'.format(prefix, first_line)
+                    if remaining_lines:
+                        indented_tail = utils.indent('\n'.join(remaining_lines), ' ' * len(prefix))
+                        blocks.append('{}\n{}'.format(block, indented_tail))
+                    else:
+                        blocks.append(block)
                 else:
-                    blocks.append(block)
-            else:
-                blocks.append(utils.indent(item_text, indent))
-        formatted += '\n'.join(blocks)
+                    blocks.append(utils.indent(item_text, indent))
+            formatted += '\n'.join(blocks)
         return formatted + '\n'
 
 
@@ -653,8 +722,7 @@ def resolve_name(name, module, type):
     # not built-in
     if module:
         # name defined in the same module
-        qname = module.qname + '.' + name
-        df = check_loaded(qname, module)
+        df = check_loaded('{}.{}'.format(module.qname, name), module)
         if df:
             return df
         # name is imported
@@ -683,12 +751,6 @@ def resolve_name(name, module, type):
                         LOG.info('Module %r referenced as "import %s" in %r loaded '
                                  'successfully, but class %r not found',
                                  imp.imported_name, imp.imported_name, module.path, qname)
-                elif imp.star_import:
-                    module_loaded = index_module_by_name(imp.imported_name)
-                    if module_loaded:
-                        df = check_loaded(qname, module_loaded)
-                        if df:
-                            return df
                 else:
                     # first, interpret import as 'from module import Name'
                     module_loaded = index_module_by_name(utils.qname_tail(imp.imported_name))
@@ -707,6 +769,12 @@ def resolve_name(name, module, type):
                                  imp.imported_name, utils.qname_tail(imp.imported_name),
                                  utils.qname_head(imp.imported_name), module.path,
                                  qname)
+            elif imp.star_import:
+                module_loaded = index_module_by_name(imp.imported_name)
+                if module_loaded:
+                    df = check_loaded('{}.{}'.format(imp.imported_name, name), module_loaded)
+                    if df:
+                        return df
 
     LOG.warning('Cannot resolve name %r in module %r', name, module or '<undefined>')
 
