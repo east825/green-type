@@ -68,7 +68,8 @@ def memo(f):
     @functools.wraps(f)
     def wrapper(*args):
         r = results.get(args, missing)
-        if r is missing:
+        from greentype import core
+        if r is missing or core.TEST_MODE:
             r = results[args] = f(*args)
         return r
 

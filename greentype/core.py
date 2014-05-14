@@ -21,6 +21,7 @@ LOG = logging.getLogger(__name__)
 
 # TODO: invent something better than global mutable state
 SRC_ROOTS = []
+TEST_MODE = False
 
 
 def path2module(path):
@@ -40,7 +41,7 @@ def path2module(path):
 
 
 def module2path(module_name):
-    rel_path = os.path.sep.join(module_name.split('.'))
+    rel_path = os.path.join(*module_name.split('.'))
     for src_root in SRC_ROOTS + sys.path:
         path = os.path.join(src_root, rel_path)
         package_path = os.path.join(path, '__init__.py')
@@ -48,7 +49,7 @@ def module2path(module_name):
             return package_path
         module_path = path + '.py'
         if os.path.isfile(module_path):
-            return module_path
+            return os.path.abspath(module_path)
     raise ValueError('Unresolved module: name={!r}'.format(module_name))
 
 
@@ -74,6 +75,11 @@ def index_module_by_name(name, recursively=True):
         LOG.warning(e)
         return None
     return SourceModuleIndexer(path).run(recursively)
+
+
+def index_builtins():
+    for module_name in sys.builtin_module_names:
+        ReflectiveModuleIndexer(module_name).run()
 
 
 class Definition(object):
@@ -233,8 +239,8 @@ class SimpleAttributesCollector(AttributesCollector):
                 elif isinstance(node.ctx, ast.Del):
                     self.attributes.add('__delitem__')
 
-class UsagesCollector(AttributesCollector):
 
+class UsagesCollector(AttributesCollector):
     def __init__(self, name):
         super(UsagesCollector, self).__init__()
         self.name = name
@@ -271,7 +277,6 @@ class UsagesCollector(AttributesCollector):
     def visit_UnaryOp(self, node):
         self.used_in_expression += self._ref_count(self.name, node)
         self.generic_visit(node)
-
 
 
 class Indexer(object):
@@ -311,7 +316,7 @@ class Indexer(object):
 class SourceModuleIndexer(Indexer, ast.NodeVisitor):
     def __init__(self, path):
         super(SourceModuleIndexer, self).__init__()
-        self.module_path = path
+        self.module_path = os.path.abspath(path)
         self.scopes_stack = []
         self.module_def = None
         self.depth = 0

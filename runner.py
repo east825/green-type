@@ -17,8 +17,7 @@ LOG = logging.getLogger(__name__)
 def analyze(path, target, recursively=True, builtins=True):
     if builtins:
         print('Analysing built-in modules...')
-        for module_name in sys.builtin_module_names:
-            core.ReflectiveModuleIndexer(module_name).run()
+        core.index_builtins()
 
     print('Analyzing user modules starting from {!r}'.format(path))
     if os.path.isfile(path):
