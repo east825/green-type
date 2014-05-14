@@ -13,9 +13,11 @@ import sys
 import textwrap
 
 from . import ast_utils
-from greentype import utils
+from . import utils
+from .utils import PY2
 
-BUILTINS = '__builtin__' if utils.PY2 else 'builtins'
+
+BUILTINS = '__builtin__' if PY2 else 'builtins'
 
 LOG = logging.getLogger(__name__)
 
@@ -78,7 +80,11 @@ def index_module_by_name(name, recursively=True):
 
 
 def index_builtins():
-    for module_name in sys.builtin_module_names:
+    builtins = list(sys.builtin_module_names)
+    if PY2:
+        builtins.append('datetime')
+
+    for module_name in builtins:
         ReflectiveModuleIndexer(module_name).run()
 
 
@@ -448,7 +454,7 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
         func_name = self.qualified_name(node)
         args = node.args
         parameters = []
-        if utils.PY2:
+        if PY2:
             # exact order doesn't matter here
             declared_params = args.args + [args.vararg] + [args.kwarg]
         else:
@@ -459,7 +465,7 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
                 continue
             if isinstance(arg, str):
                 param_name = arg
-            elif utils.PY2:
+            elif PY2:
                 if isinstance(arg, ast.Name):
                     param_name = arg.id
                 else:
@@ -505,7 +511,7 @@ class ReflectiveModuleIndexer(Indexer):
         LOG.debug('Reflectively analyzing %r', self.module_name)
 
         def name(obj):
-            return obj.__name__ if utils.PY2 else obj.__qualname__
+            return obj.__name__ if PY2 else obj.__qualname__
 
         module = importlib.import_module(self.module_name, None)
         module_def = ModuleDefinition(self.module_name, None, None, ())
