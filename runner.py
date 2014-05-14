@@ -4,7 +4,7 @@ import os
 import logging
 import argparse
 import time
-import sys
+import traceback
 
 from greentype import core
 from greentype import utils
@@ -32,7 +32,7 @@ def analyze(path, target, recursively=True, builtins=True, dump_params=False):
                     # ignore namespace packages for now
                     LOG.debug('Not a package: %r. Skipping.', abs_path)
                     dirnames.remove(name)
-                if name.startswith('.'):
+                elif name.startswith('.'):
                     LOG.debug('Hidden directory: %r. Skipping.', abs_path)
                     dirnames.remove(name)
             for name in filenames:
@@ -90,7 +90,7 @@ def main():
                 builtins=not args.no_builtins,
                 dump_params=args.dump_parameters)
     except Exception as e:
-        LOG.exception(e)
+        traceback.print_exc()
 
 
 if __name__ == '__main__':
