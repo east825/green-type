@@ -7,7 +7,7 @@ import inspect
 import logging
 from collections import defaultdict
 from contextlib import contextmanager
-import itertools
+import operator
 import os
 import sys
 import textwrap
@@ -175,8 +175,10 @@ class Parameter(object):
         self.qname = qname
         self.attributes = attributes
         self.suggested_types = set()
-        self.passed_as_argument = 0
-        self.used_in_expression = 0
+        self.used_as_argument = 0
+        self.used_directly = 0
+        self.used_as_operand = 0
+        self.returned = 0
 
     @property
     def name(self):
@@ -239,11 +241,10 @@ class SimpleAttributesCollector(AttributesCollector):
         if isinstance(node.value, ast.Name) and node.value.id == self.name:
             if isinstance(node.ctx, ast.Load):
                 self.attributes.add('__getitem__')
-            elif not self.read_only:
-                if isinstance(node.ctx, ast.Store):
-                    self.attributes.add('__setitem__')
-                elif isinstance(node.ctx, ast.Del):
-                    self.attributes.add('__delitem__')
+            elif isinstance(node.ctx, ast.Store):
+                self.attributes.add('__setitem__')
+            elif isinstance(node.ctx, ast.Del):
+                self.attributes.add('__delitem__')
 
 
 class UsagesCollector(AttributesCollector):
@@ -252,37 +253,24 @@ class UsagesCollector(AttributesCollector):
         self.name = name
 
     def collect(self, node):
-        self.passed_as_argument = 0
-        self.used_in_expression = 0
+        self.used_as_argument = 0
+        self.used_as_operand = 0
+        self.used_directly = 0
+        self.returned = 0
         self.visit(node)
-        return self.passed_as_argument, self.used_in_expression
 
-    def _ref_count(self, name, node):
-        if not isinstance(node, ast.AST) or isinstance(node, (ast.Attribute, ast.Subscript)):
-            return 0
-        if isinstance(node, ast.Name) and node.id == name:
-            return 1
-        return sum(self._ref_count(name, child) for child in ast.iter_child_nodes(node))
-
-    def visit_Call(self, node):
-        arguments = node.args + [kw.value for kw in node.keywords]
-        if node.starargs:
-            arguments.append(node.starargs)
-        if node.kwargs:
-            arguments.append(node.kwargs)
-        for expr in arguments:
-            if isinstance(expr, ast.Name) and expr.id == self.name:
-                self.passed_as_argument += 1
-
-        self.generic_visit(node)
-
-    def visit_BinOp(self, node):
-        self.used_in_expression += self._ref_count(self.name, node)
-        self.generic_visit(node)
-
-    def visit_UnaryOp(self, node):
-        self.used_in_expression += self._ref_count(self.name, node)
-        self.generic_visit(node)
+    def visit_Name(self, node):
+        parent = ast_utils.node_parent(node)
+        if not isinstance(parent, (ast.Attribute, ast.Subscript)):
+            if node.id == self.name:
+                self.used_directly += 1
+                # keywords lhs is identifier (raw str) and lhs is value
+                if isinstance(parent, (ast.keyword, ast.Call)):
+                    self.used_as_argument += 1
+                if isinstance(parent, ast.Return):
+                    self.returned += 1
+                if isinstance(parent, (ast.BinOp, ast.UnaryOp)):
+                    self.used_as_operand += 1
 
 
 class Indexer(object):
@@ -472,10 +460,15 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
                     LOG.warning('Function %s uses argument patterns. Skipped.', func_name)
             else:
                 param_name = arg.arg
-            attributes = SimpleAttributesCollector(param_name).collect(node)
+            attributes = SimpleAttributesCollector(param_name).collect(node.body)
             param_qname = func_name + '.' + param_name
             param = Parameter(param_qname, attributes)
-            param.passed_as_argument, param.used_in_expression = UsagesCollector(param_name).collect(node)
+            collector = UsagesCollector(param_name)
+            collector.collect(node.body)
+            param.used_as_argument = collector.used_as_argument
+            param.used_as_operand = collector.used_as_operand
+            param.used_directly = collector.used_directly
+            param.returned = collector.returned
             parameters.append(param)
 
         func_def = FunctionDefinition(func_name, node, self.module_def, parameters)
@@ -530,14 +523,28 @@ class ReflectiveModuleIndexer(Indexer):
 class Statistic(object):
     def __init__(self, total=True, prolific_params=True, param_types=True,
                  dump_functions=False, dump_classes=False, dump_params=False,
-                 top_size=20):
+                 top_size=20, prefix='', dump_usages=False):
         self.show_total = total
         self.show_prolific_params = prolific_params
         self.show_param_types = param_types
         self.dump_functions = dump_functions
         self.dump_classes = dump_classes
         self.dump_params = dump_params
+        self.dump_usages = dump_usages
         self.top_size = top_size
+        self.prefix = prefix
+
+    @property
+    def parameters(self):
+        return list(Indexer.PARAMETERS_INDEX.values())
+
+    @property
+    def classes(self):
+        return list(Indexer.CLASS_INDEX.values())
+
+    @property
+    def functions(self):
+        return list(Indexer.FUNCTION_INDEX.values())
 
     def total_functions(self):
         return len(Indexer.FUNCTION_INDEX)
@@ -558,18 +565,17 @@ class Statistic(object):
                 result.append(definition)
         return result
 
-    def _definitions_under_qualifier(self, definitions, qualifier):
-        result = []
-        for definition in definitions:
-            if definition.qname.startswith(qualifier):
-                result.append(definition)
-        return result
+    def _filter_prefix(self, definitions):
+        return (d for d in definitions if d.qname.startswith(self.prefix))
 
     def attributeless_params(self):
         return [p for p in Indexer.PARAMETERS_INDEX.values() if not p.attributes]
 
     def undefined_parameters(self):
-        return [p for p in Indexer.PARAMETERS_INDEX.values() if not p.suggested_types]
+        return [p for p in Indexer.PARAMETERS_INDEX.values() if p.attributes and not p.suggested_types]
+
+    def inferred_parameters(self):
+        return [p for p in Indexer.PARAMETERS_INDEX.values() if len(p.suggested_types) == 1]
 
     def scattered_parameters(self):
         return [p for p in Indexer.PARAMETERS_INDEX.values() if len(p.suggested_types) > 1]
@@ -598,13 +604,13 @@ class Statistic(object):
     def sample_parameters_not_used_anywhere(self, n):
         result = []
         for param in Indexer.PARAMETERS_INDEX.values():
-            if not param.attributes and not (param.passed_as_argument or param.used_in_expression):
+            if not param.attributes and not param.used_directly:
                 result.append(param)
             if len(result) > n:
                 break
         return result
 
-    def format(self, target=None):
+    def format(self):
         formatted = ''
         if self.show_total:
             formatted += 'Total indexed: {} classes with {} attributes, ' \
@@ -625,17 +631,27 @@ class Statistic(object):
             attributeless_params = self.attributeless_params()
             total_attributeless = len(attributeless_params)
             total_undefined = len(self.undefined_parameters())
+            total_inferred = len(self.inferred_parameters())
             total_scattered = len(self.scattered_parameters())
             formatted += textwrap.dedent("""
             Parameters statistic:
-              {:3} ({:.2%}) parameters has no attributes ({:.2%} used in expressions, {:.2%} passed in other function),
-              {:3} ({:.2%}) parameters has unknown type,
-              {:3} ({:.2%}) parameters has scattered types
+              {} ({:.2%}) parameters have no attributes (types cannot be inferred):
+              However, of them:
+                - {:.2%} used directly somehow (no attribute access or subscripts)
+                - {:.2%} passed as arguments to other function
+                - {:.2%} used as operands in arithmetic or logical expressions
+                - {:.2%} returned from function
+              {} ({:.2%}) parameters have some parameters, but no type inferred,
+              {} ({:.2%}) parameters have exactly one type inferred,
+              {} ({:.2%}) parameters have more then one inferred type (scattered types)
             """.format(
                 total_attributeless, (total_attributeless / total_params),
-                sum(p.used_in_expression > 0 for p in attributeless_params) / total_attributeless,
-                sum(p.passed_as_argument > 0 for p in attributeless_params) / total_attributeless,
+                sum(p.used_directly > 0 for p in attributeless_params) / total_attributeless,
+                sum(p.used_as_argument > 0 for p in attributeless_params) / total_attributeless,
+                sum(p.used_as_operand > 0 for p in attributeless_params) / total_attributeless,
+                sum(p.returned > 0 for p in attributeless_params) / total_attributeless,
                 total_undefined, (total_undefined / total_params),
+                total_inferred, (total_inferred / total_params),
                 total_scattered, (total_scattered / total_params)))
 
             formatted += self._format_list(
@@ -651,28 +667,32 @@ class Statistic(object):
             )
 
             formatted += self._format_list(
-                header='Parameters that have no attributes and not used '
+                header='Parameters that have no attributes and not used directly '
                        'elsewhere (first {})'.format(self.top_size),
                 items=self.sample_parameters_not_used_anywhere(self.top_size)
             )
         if self.dump_classes:
-            if target:
-                classes = self._definitions_under_qualifier(Indexer.CLASS_INDEX.values(), target)
-            else:
-                classes = Indexer.CLASS_INDEX.values()
+            classes = self._filter_prefix(Indexer.CLASS_INDEX.values())
             formatted += self._format_list(header='Classes:', items=classes)
         if self.dump_functions:
-            if target:
-                functions = self._definitions_under_qualifier(Indexer.FUNCTION_INDEX.values(), target)
-            else:
-                functions = Indexer.FUNCTION_INDEX.values()
+            functions = self._filter_prefix(Indexer.FUNCTION_INDEX.values())
             formatted += self._format_list(header='Functions:', items=functions)
         if self.dump_params:
-            if target:
-                parameters = self._definitions_under_qualifier(Indexer.PARAMETERS_INDEX.values(), target)
-            else:
-                parameters = Indexer.PARAMETERS_INDEX.values()
-            formatted += self._format_list(header='Parameters:', items=parameters)
+            parameters = self._filter_prefix(Indexer.PARAMETERS_INDEX.values())
+            chunks = []
+            for param in sorted(parameters, key=operator.attrgetter('qname')):
+                chunks.append(textwrap.dedent("""\
+                Parameter {}:
+                - used directly: {:d} times
+                - passed to other function: {:d} times
+                - used in arithmetic and logical expressions {:d} times
+                - returned: {:d} times
+                """.format(param,
+                           param.used_directly,
+                           param.used_as_argument,
+                           param.used_as_operand,
+                           param.returned)))
+            formatted += self._format_list(header='Parameters', items=chunks)
         return formatted
 
     def __str__(self):
