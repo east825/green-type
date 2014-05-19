@@ -1,10 +1,12 @@
-from common import *
+from conftest import *
 
-pytestmark = pytest.mark.usefixtures('in_tests_directory', 'invalidate_caches')
+TEST_DATA_DIR = 'statistics'
+
+pytestmark = pytest.mark.usefixtures('in_test_data_dir', 'invalidate_caches')
 
 
 def test_usages():
-    with sources_root('statistics'):
+    with sources_root():
         module = core.index_module_by_path('usages.py')
         assert module is not None
 
