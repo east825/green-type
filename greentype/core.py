@@ -318,8 +318,9 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
 
     def qualified_name(self, node):
         node_name = ast_utils.node_name(node)
-        if self.scopes_stack:
-            return self.scopes_stack[-1].qname + '.' + node_name
+        scope_owner = self.parent_scope()
+        if scope_owner:
+            return scope_owner.qname + '.' + node_name
         return node_name
 
     def run(self, recursively=True):
@@ -341,6 +342,11 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
             super(SourceModuleIndexer, self).visit(node)
         finally:
             self.depth -= 1
+
+    def parent_scope(self):
+        if self.scopes_stack:
+            return self.scopes_stack[-1]
+        return None
 
     @contextmanager
     def scope_owner(self, definition):
@@ -388,15 +394,19 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
                 elif package:
                     target_module = package
                 else:
-                    raise Exception('Malformed ImportFrom statement: file={!r} module={}, level={}'.format(
-                        self.module_path, child.module, child.level))
+                    raise Exception('Malformed ImportFrom statement: '
+                                    'file={!r} module={}, level={}'.format(self.module_path,
+                                                                           child.module,
+                                                                           child.level))
                 for alias in child.names:
                     if alias.name == '*':
                         imports.append(Import(target_module, None, True, True))
                     else:
                         imported_name = '{}.{}'.format(target_module, alias.name)
-                        imports.append(Import(imported_name, alias.asname or alias.name, True, False))
-        module_def = ModuleDefinition(path2module(self.module_path), node, self.module_path, imports)
+                        imports.append(
+                            Import(imported_name, alias.asname or alias.name, True, False))
+        module_def = ModuleDefinition(path2module(self.module_path), node, self.module_path,
+                                      imports)
         self.register_module(module_def)
         return module_def
 
@@ -416,7 +426,8 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
             def visit_FunctionDef(self, func_node):
                 self.attributes.add(func_node.name)
                 if ast_utils.node_name(func_node) == '__init__':
-                    self_attributes = SimpleAttributesCollector('self', read_only=False).collect(func_node)
+                    self_attributes = SimpleAttributesCollector('self', read_only=False).collect(
+                        func_node)
                     self.attributes.update(self_attributes)
 
             def visit_Assign(self, assign_node):
@@ -425,7 +436,8 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
                     self.attributes.add(target.id)
 
         class_attributes = ClassAttributeCollector().collect(node)
-        class_def = ClassDefinition(class_name, node, self.module_def, bases_names, class_attributes)
+        class_def = ClassDefinition(class_name, node, self.module_def, bases_names,
+                                    class_attributes)
         self.register_class(class_def)
         self.add_definition(class_def)
         return class_def
@@ -441,12 +453,22 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
     def function_discovered(self, node):
         func_name = self.qualified_name(node)
         args = node.args
-        parameters = []
+        parent_scope = self.parent_scope()
+
+        decorators = [ast_utils.attributes_chain_to_name(d) for d in node.decorator_list]
+        if isinstance(parent_scope, ClassDefinition) and \
+                not ('staticmethod' in decorators or 'classmethod' in decorators):
+            declared_params = args.args[1:]
+        else:
+            declared_params = args.args
+
         if PY2:
             # exact order doesn't matter here
-            declared_params = args.args + [args.vararg] + [args.kwarg]
+            declared_params += [args.vararg] + [args.kwarg]
         else:
-            declared_params = args.args + [args.vararg] + args.kwonlyargs + [args.kwarg]
+            declared_params += [args.vararg] + args.kwonlyargs + [args.kwarg]
+
+        parameters = []
         for arg in declared_params:
             # *args and **kwargs may be None
             if arg is None:
@@ -572,7 +594,8 @@ class Statistic(object):
         return [p for p in Indexer.PARAMETERS_INDEX.values() if not p.attributes]
 
     def undefined_parameters(self):
-        return [p for p in Indexer.PARAMETERS_INDEX.values() if p.attributes and not p.suggested_types]
+        return [p for p in Indexer.PARAMETERS_INDEX.values() if
+                p.attributes and not p.suggested_types]
 
     def inferred_parameters(self):
         return [p for p in Indexer.PARAMETERS_INDEX.values() if len(p.suggested_types) == 1]
