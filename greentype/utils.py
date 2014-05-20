@@ -13,6 +13,7 @@ if PY2:
 else:
     from collections.abc import Iterable
 
+
 def is_collection(x):
     return isinstance(x, Iterable) and not isinstance(x, (str, bytes))
 
@@ -52,6 +53,17 @@ def qname_tail(name):
     return tail or None
 
 
+def qname_split(name):
+    tail, _, head = name.rpartition('.')
+    return tail or None, head
+
+
+def qname_drop(name, qualifier):
+    if qname_qualified_by(name, qualifier) and qualifier:
+        return name[len(qualifier + '.'):]
+    return name
+
+
 def qname_qualified_by(name, qualifier):
     if not qualifier:
         return True
@@ -69,6 +81,7 @@ def memo(f):
     def wrapper(*args):
         r = results.get(args, missing)
         from greentype import core
+
         if r is missing or core.TEST_MODE:
             r = results[args] = f(*args)
         return r

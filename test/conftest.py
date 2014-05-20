@@ -1,9 +1,11 @@
 from contextlib import contextmanager
+import logging
 import os
 import pytest
 from greentype import core
 
 core.TEST_MODE = True
+core.LOG.setLevel(logging.DEBUG)
 
 TEST_ROOT = os.path.dirname(__file__)
 TEST_DATA_ROOT = os.path.join(TEST_ROOT, 'test_data')

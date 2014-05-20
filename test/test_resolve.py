@@ -57,6 +57,10 @@ def test_import_from_relative_star():
     with sources_root('local/import_from/relative/import_star'):
         assert_resolved('p1/p2/main.py', 'B', 'p1.module.B')
 
+def test_import_chain():
+    with sources_root('local/import_chain'):
+        assert_resolved('main.py', 'alias.A.Inner', 'package.module.MyClass.Inner')
+
 
 def test_resolve_stdlib():
     core.index_builtins()

@@ -121,9 +121,6 @@ class ModuleDefinition(Definition):
         self.path = path
         # top-level imports
         self.imports = imports
-        # top-level definitions
-        # they are used mainly to handle 'from .submodule import *' in __init__.py
-        self.definitions = {}
 
     def __str__(self):
         return 'module {} at {!r}'.format(self.qname, self.path)
@@ -335,7 +332,21 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
         ast_utils.interlink_ast(self.root)
         self.visit(self.root)
         if recursively and self.module_def:
-            self.analyze_imports(self.module_def, recursively)
+            for imp in self.module_def.imports:
+                if not imp.import_from or imp.star_import:
+                    # for imports of form
+                    # >>> for import foo.bar
+                    # or
+                    # >>> from foo.bar import *
+                    # go straight to 'foo.bar'
+                    index_module_by_name(imp.imported_name, recursively)
+                else:
+                    # in case of import of form
+                    # >>> from foo.bar import baz [as quux]
+                    # try to index both modules: foo.bar.baz and foo.bar
+                    # the latter is needed if baz is top-level name in foo/bar/__init__.py
+                    index_module_by_name(imp.imported_name, recursively)
+                    index_module_by_name(utils.qname_tail(imp.imported_name), recursively)
         return self.module_def
 
     def visit(self, node):
@@ -441,16 +452,7 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
         class_def = ClassDefinition(class_name, node, self.module_def, bases_names,
                                     class_attributes)
         self.register_class(class_def)
-        self.add_definition(class_def)
         return class_def
-
-    def add_definition(self, definition):
-        if self.module_def:
-            qualifier = utils.qname_tail(definition.qname)
-            short_name = utils.qname_head(definition.qname)
-            # is top level definition
-            if qualifier == self.module_def.qname:
-                self.module_def.definitions[short_name] = definition
 
     def function_discovered(self, node):
         func_name = self.qualified_name(node)
@@ -497,27 +499,7 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
 
         func_def = FunctionDefinition(func_name, node, self.module_def, parameters)
         self.register_function(func_def)
-        self.add_definition(func_def)
         return func_def
-
-    def analyze_imports(self, module_def, recursively):
-        for imp in module_def.imports:
-            if not imp.import_from:
-                index_module_by_name(imp.imported_name, recursively)
-            elif not imp.star_import:
-                module_name = utils.qname_tail(imp.imported_name)
-                imported_def_name = utils.qname_head(imp.imported_name)
-                module = index_module_by_name(module_name, recursively)
-                if module:
-                    definition = module.definitions.get(imported_def_name)
-                    # self.register(definition)
-                    if definition:
-                        module_def.definitions[imported_def_name] = definition
-            else:
-                module_name = imp.imported_name
-                module = index_module_by_name(module_name, recursively)
-                if module:
-                    module_def.definitions.update(module.definitions)
 
 
 class ReflectiveModuleIndexer(Indexer):
@@ -538,9 +520,7 @@ class ReflectiveModuleIndexer(Indexer):
                 class_name = self.module_name + '.' + name(cls)
                 bases = tuple(name(b) for b in cls.__bases__)
                 attributes = set(vars(cls))
-                class_def = ClassDefinition(class_name, None, None, bases, attributes)
-                module_def.definitions[name(cls)] = class_def
-                self.register_class(class_def)
+                self.register_class(ClassDefinition(class_name, None, None, bases, attributes))
         self.register_module(module_def)
 
 
@@ -773,12 +753,6 @@ def resolve_name(name, module, type):
             definition = Indexer.CLASS_INDEX.get(qname)
         else:
             definition = Indexer.FUNCTION_INDEX.get(qname)
-        # check amongst imported definitions of module
-        if not definition and module:
-            short_name = utils.qname_head(qname)
-            qualifier = utils.qname_tail(qname)
-            if module.qname == qualifier:
-                definition = module.definitions.get(short_name)
         return definition
 
     # already properly qualified name or built-in
@@ -812,23 +786,30 @@ def resolve_name(name, module, type):
                 if not imp.import_from:
                     module_loaded = index_module_by_name(imp.imported_name)
                     if module_loaded:
-                        df = check_loaded(qname, module_loaded)
+                        # drop local name (alias) for imports like
+                        # import module as alias
+                        # print(alias.MyClass.InnerClass())
+                        top_level_name = utils.qname_drop(name, imp.local_name)
+                        df = resolve_name(top_level_name, module_loaded, type)
                         if df:
                             return df
                         LOG.info('Module %r referenced as "import %s" in %r loaded '
                                  'successfully, but class %r not found',
                                  imp.imported_name, imp.imported_name, module.path, qname)
                 else:
-                    # first, interpret import as 'from module import Name'
-                    module_loaded = index_module_by_name(utils.qname_tail(imp.imported_name))
+                    # first, interpret import like 'from module import Name'
+                    module_name = utils.qname_tail(imp.imported_name)
+                    module_loaded = index_module_by_name(module_name)
                     if module_loaded:
-                        df = check_loaded(qname, module_loaded)
+                        top_level_name = utils.qname_drop(qname, module_name)
+                        df = resolve_name(top_level_name, module_loaded, type)
                         if df:
                             return df
                     # then, as 'from package import module'
                     module_loaded = index_module_by_name(imp.imported_name)
                     if module_loaded:
-                        df = check_loaded(qname, module_loaded)
+                        top_level_name = utils.qname_drop(name, imp.local_name)
+                        df = resolve_name(qname, top_level_name, type)
                         if df:
                             return df
                         LOG.info('Module %r referenced as "from %s import %s" in %r loaded '
@@ -839,7 +820,9 @@ def resolve_name(name, module, type):
             elif imp.star_import:
                 module_loaded = index_module_by_name(imp.imported_name)
                 if module_loaded:
-                    df = check_loaded('{}.{}'.format(imp.imported_name, name), module_loaded)
+                    # no aliased allowed with 'from module import *' so we check directly
+                    # for name searched in the first place
+                    df = resolve_name(name, module_loaded, type)
                     if df:
                         return df
 
