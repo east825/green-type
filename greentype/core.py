@@ -27,7 +27,7 @@ SRC_ROOTS = []
 TEST_MODE = False
 
 
-def path2module(path):
+def path_to_module(path):
     path = os.path.abspath(path)
     roots = SRC_ROOTS + [p for p in sys.path if p not in ('', '.', os.getcwd())]
     for src_root in roots:
@@ -43,7 +43,7 @@ def path2module(path):
     raise ValueError('Unresolved module: path={!r}'.format(path))
 
 
-def module2path(module_name):
+def module_to_path(module_name):
     rel_path = os.path.join(*module_name.split('.'))
     for src_root in SRC_ROOTS + sys.path:
         path = os.path.join(src_root, rel_path)
@@ -58,7 +58,7 @@ def module2path(module_name):
 
 def index_module_by_path(path, recursively=True):
     try:
-        module_name = path2module(path)
+        module_name = path_to_module(path)
     except ValueError as e:
         LOG.warning(e)
         return None
@@ -73,7 +73,7 @@ def index_module_by_name(name, recursively=True):
     if loaded:
         return loaded
     try:
-        path = module2path(name)
+        path = module_to_path(name)
     except ValueError as e:
         LOG.warning(e)
         return None
@@ -323,7 +323,7 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
         return node_name
 
     def run(self, recursively=True):
-        if path2module(self.module_path) in Indexer.MODULE_INDEX:
+        if path_to_module(self.module_path) in Indexer.MODULE_INDEX:
             return
 
         LOG.debug('Indexing module %r', self.module_path)
@@ -397,7 +397,7 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
                     # correctly handle absolute/relative names, drives etc.
                     for _ in range(child.level):
                         package_path = os.path.dirname(package_path)
-                    package = path2module(package_path)
+                    package = path_to_module(package_path)
                 else:
                     package = ''
                 if child.module and package:
@@ -418,7 +418,7 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
                         imported_name = '{}.{}'.format(target_module, alias.name)
                         imports.append(
                             Import(imported_name, alias.asname or alias.name, True, False))
-        module_def = ModuleDefinition(path2module(self.module_path), node, self.module_path,
+        module_def = ModuleDefinition(path_to_module(self.module_path), node, self.module_path,
                                       imports)
         self.register_module(module_def)
         return module_def
