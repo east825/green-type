@@ -49,13 +49,13 @@ def analyze(path, target, recursively=True, builtins=True, dump_params=False):
         for param in func.parameters:
             param.suggested_types = core.suggest_classes_by_attributes(param.attributes)
     print('Stopped inferring: {:.2f}s spent\n'.format(time.clock() - start_time))
-    print(core.Statistic(dump_params=dump_params, prefix=target))
+    print(core.Statistic(dump_params=dump_params, prefix=target, random_inferred=True, top_size=10))
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--src-roots', help='Sources roots separated by colon.')
-    parser.add_argument('-t', '--target',  default='', help='Target qualifier to restrict output.')
+    parser.add_argument('-t', '--target', default='', help='Target qualifier to restrict output.')
     parser.add_argument('-r', '--recursively', action='store_true',
                         help='Follow imports during indexing.')
     parser.add_argument('-B', '--no-builtins', action='store_true',
@@ -81,7 +81,8 @@ def main():
             elif os.path.isdir(target_path):
                 core.SRC_ROOTS.append(target_path)
             else:
-                raise ValueError('Unrecognized target {!r}. Should be either file or directory.'.format(target_path))
+                raise ValueError('Unrecognized target {!r}. '
+                                 'Should be either file or directory.'.format(target_path))
         else:
             core.SRC_ROOTS.extend(map(normalize, args.src_roots.split(':')))
         analyze(target_path,

@@ -9,6 +9,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 import operator
 import os
+import random
 import sys
 import textwrap
 
@@ -81,6 +82,7 @@ def index_module_by_name(name, recursively=True):
 
 def index_builtins():
     builtins = list(sys.builtin_module_names)
+    builtins.append('_socket')
     if PY2:
         builtins.append('datetime')
 
@@ -545,10 +547,11 @@ class ReflectiveModuleIndexer(Indexer):
 class Statistic(object):
     def __init__(self, total=True, prolific_params=True, param_types=True,
                  dump_functions=False, dump_classes=False, dump_params=False,
-                 top_size=20, prefix='', dump_usages=False):
+                 top_size=20, prefix='', dump_usages=False, random_inferred=True):
         self.show_total = total
         self.show_prolific_params = prolific_params
         self.show_param_types = param_types
+        self.show_random_inferred = random_inferred
         self.dump_functions = dump_functions
         self.dump_classes = dump_classes
         self.dump_params = dump_params
@@ -694,6 +697,16 @@ class Statistic(object):
                        'elsewhere (first {})'.format(self.top_size),
                 items=self.sample_parameters_not_used_anywhere(self.top_size)
             )
+
+        if self.show_random_inferred:
+            params = list(self._filter_prefix(self.inferred_parameters()))
+            quantity = min(self.top_size, len(params))
+            formatted += self._format_list(
+                header='Parameters with definitively inferred types '
+                       '(random {}, total {})'.format(quantity, len(params)),
+                items=random.sample(params, quantity)
+            )
+
         if self.dump_classes:
             classes = self._filter_prefix(Indexer.CLASS_INDEX.values())
             formatted += self._format_list(header='Classes:', items=classes)
