@@ -1,6 +1,6 @@
 import pytest
 
-from conftest import sources_root
+from conftest import sources_roots
 from greentype import core
 
 TEST_DATA_DIR = 'indexing'
@@ -9,7 +9,7 @@ pytestmark = pytest.mark.usefixtures('in_test_data_dir', 'invalidate_caches')
 
 
 def test_self_filtering():
-    with sources_root():
+    with sources_roots():
         module = core.index_module_by_path('self_filtering.py')
         assert module is not None
 

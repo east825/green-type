@@ -32,8 +32,27 @@ def path_to_module(path):
     roots = SRC_ROOTS + [p for p in sys.path if p not in ('', '.', os.getcwd())]
     for src_root in roots:
         if path.startswith(src_root):
-            # TODO: check that on all way up to module correct packages with __init__ is used
+            # check that on all way up to module correct packages with __init__ exist
+
+            in_proper_package = True
+            # package_path = os.path.dirname(path)
+            # while package_path != src_root:
+            #     if not os.path.exists(os.path.join(package_path, '__init__.py')):
+            #         in_proper_package = False
+            #         break
+            #     package_path = os.path.dirname(package_path)
+
             relative = os.path.relpath(path, src_root)
+            package_path = src_root
+            for comp in relative.split(os.path.sep)[:-1]:
+                package_path = os.path.join(package_path, comp)
+                if not os.path.exists(os.path.join(package_path, '__init__.py')):
+                    in_proper_package = False
+                    break
+
+            if not in_proper_package:
+                continue
+
             dir_name, base_name = os.path.split(relative)
             if base_name == '__init__.py':
                 prepared = dir_name
@@ -748,7 +767,7 @@ class Statistic(object):
 def resolve_name(name, module, type):
     """Resolve name using indexes and following import if it's necessary."""
 
-    def check_loaded(qname, module=None):
+    def check_loaded(qname):
         if type is ClassDefinition:
             definition = Indexer.CLASS_INDEX.get(qname)
         else:
@@ -763,7 +782,7 @@ def resolve_name(name, module, type):
     # not built-in
     if module:
         # name defined in the same module
-        df = check_loaded('{}.{}'.format(module.qname, name), module)
+        df = check_loaded('{}.{}'.format(module.qname, name))
         if df:
             return df
         # name is imported
@@ -779,7 +798,7 @@ def resolve_name(name, module, type):
                 # >>> from some.module import Base as alias
                 # index some.module, then check some.module.Base
                 # if not found index some.module.Base, then check some.module.Base again
-                df = check_loaded(qname, module)
+                df = check_loaded(qname)
                 if df:
                     return df
 

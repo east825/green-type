@@ -6,7 +6,7 @@ pytestmark = pytest.mark.usefixtures('in_test_data_dir', 'invalidate_caches')
 
 
 def test_usages():
-    with sources_root():
+    with sources_roots():
         module = core.index_module_by_path('usages.py')
         assert module is not None
 

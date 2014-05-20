@@ -30,15 +30,15 @@ def invalidate_caches():
 
 
 @contextmanager
-def sources_root(root=None):
-    if root is None:
-        root = os.getcwd()
-    root = os.path.abspath(root)
-    core.SRC_ROOTS.insert(0, root)
+def sources_roots(*roots):
+    if not roots:
+        roots = [os.getcwd()]
+    old_roots = core.SRC_ROOTS
+    core.SRC_ROOTS = list(map(os.path.abspath, roots))
     old_cwd = os.getcwd()
-    os.chdir(root)
+    os.chdir(roots[0])
     try:
         yield
     finally:
         os.chdir(old_cwd)
-        core.SRC_ROOTS.remove(root)
+        core.SRC_ROOTS = old_roots
