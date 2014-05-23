@@ -5,6 +5,7 @@ import os
 import contextlib
 import traceback
 import sys
+import time
 
 PY2 = sys.version_info.major == 2
 
@@ -96,6 +97,32 @@ def memoized(f):
         return r
 
     return wrapper
+
+
+def timed(func=None, header=None):
+    # alternative solution is custom context manager class with
+    # __call__() overridden
+
+    class Timer(object):
+        def __enter__(self):
+            self.start = time.clock()
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            elapsed = time.clock() - self.start
+            print('{}: {:.2f}s'.format(header or 'Total', elapsed))
+
+    if header and func is None:
+        return functools.partial(timed, header=header)
+
+    if func:
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            with Timer():
+                func(*args, **kwargs)
+
+        return wrapper
+    return Timer()
 
 
 def camel_to_snake(s):
