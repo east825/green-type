@@ -20,6 +20,7 @@ def attributes_chain_to_name(node):
 def node_name(node):
     return getattr(node, 'id', None) or getattr(node, 'name', None)
 
+
 def node_parent(node):
     parent = getattr(node, '_parent', None)
     return parent() if parent is not None else None
@@ -70,8 +71,9 @@ def find_parents(node, cls, stop_cls=ast.Module, strict=True):
     return reversed(parents)
 
 
-
 INDENT_SIZE = 2
+
+
 def format_node(node, include_fields=False):
     fields = collections.OrderedDict()
     fields['line'] = getattr(node, 'lineno', '<unknown>')
@@ -82,7 +84,6 @@ def format_node(node, include_fields=False):
                 fields[field_name] = field
     formatted_pairs = ['{}={!r}'.format(k, v) for k, v in fields.items()]
     return '{}({})'.format(type(node).__name__, ' '.join(formatted_pairs))
-
 
 
 def dump_ast(node, indent=0):
@@ -106,7 +107,7 @@ def dump_ast(node, indent=0):
 
 class DumpVisitor(ast.NodeVisitor):
     def __init__(self, increment=INDENT_SIZE):
-        super().__init__()
+        super(DumpVisitor, self).__init__()
         self.increment = increment
         self.lines = []
         self.indent = 0
@@ -132,6 +133,20 @@ def main(path):
         # visitor = DumpVisitor()
         # visitor.visit(ast.parse(f.read(), path))
         # visitor.dump()
+
+
+class GeneratorVisitor(object):
+    def visit(self, node):
+        if isinstance(node, ast.AST):
+            method_name = 'visit_' + node.__class__.__name__
+            for value in getattr(self, method_name, self.generic_visit)(node):
+                yield value
+
+
+    def generic_visit(self, node):
+        for node in ast.iter_child_nodes(node):
+            for value in self.visit(node):
+                yield value
 
 
 if __name__ == '__main__':

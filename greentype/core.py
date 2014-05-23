@@ -5,7 +5,6 @@ import heapq
 import importlib
 import inspect
 import logging
-from collections import defaultdict
 from contextlib import contextmanager
 import operator
 import os
@@ -15,108 +14,425 @@ import textwrap
 
 from . import ast_utils
 from . import utils
-from .utils import PY2
+from .utils import PY2, memoized
 
 
 BUILTINS = '__builtin__' if PY2 else 'builtins'
 
 LOG = logging.getLogger(__name__)
 
-# TODO: invent something better than global mutable state
-SRC_ROOTS = []
-TEST_MODE = False
+from collections import defaultdict
+
+# TODO: it's better to be Trie, views better to be immutable
+class Index(defaultdict):
+    def items(self, key_filter=None):
+        return ((k, self[k]) for k in self.keys(key_filter))
+
+    def values(self, key_filter=None):
+        return (self[k] for k in self.keys(key_filter))
+
+    def keys(self, key_filter=None):
+        all_keys = super(Index, self).keys()
+        if key_filter is None:
+            return all_keys
+        return (k for k in all_keys if key_filter(k))
 
 
-def path_to_module(path):
-    path = os.path.abspath(path)
-    roots = SRC_ROOTS + [p for p in sys.path if p not in ('', '.', os.getcwd())]
-    for src_root in roots:
-        if path.startswith(src_root):
-            # check that on all way up to module correct packages with __init__ exist
+class StatisticUnit(object):
+    __slots__ = ('_min', '_max', '_items', '_counter')
 
-            in_proper_package = True
-            # package_path = os.path.dirname(path)
-            # while package_path != src_root:
-            #     if not os.path.exists(os.path.join(package_path, '__init__.py')):
-            #         in_proper_package = False
-            #         break
-            #     package_path = os.path.dirname(package_path)
+    def __init__(self):
+        self._min = None
+        self._max = None
+        self._items = None
+        self._counter = None
 
-            relative = os.path.relpath(path, src_root)
-            package_path = src_root
-            for comp in relative.split(os.path.sep)[:-1]:
-                package_path = os.path.join(package_path, comp)
-                if not os.path.exists(os.path.join(package_path, '__init__.py')):
-                    in_proper_package = False
-                    break
+    def update(self, collection):
+        if self._items is None:
+            self._items = set()
+        self._items.update(collection)
 
-            if not in_proper_package:
+    def add(self, *items):
+        if self._items is None:
+            self._items = set()
+        self._items.add(*items)
+
+    def inc(self, value=1):
+        if self._counter is None:
+            self._counter = 0
+        self._counter += value
+
+    def set_max(self, value):
+        if self._max is None:
+            self._max = value
+        else:
+            self._max = max(self._max, value)
+
+    def set_min(self, value):
+        if self._min is None:
+            self._min = value
+        else:
+            self._min = min(self._min, value)
+
+    def __iadd__(self, other):
+        self.inc(other)
+
+    def as_dict(self, skip_none=True):
+        d = {}
+        for name in self.__slots__:
+            attr = getattr(self, name)
+            if attr is None and skip_none:
                 continue
+            d[name.strip('_')] = attr
+        return d
 
-            dir_name, base_name = os.path.split(relative)
-            if base_name == '__init__.py':
-                prepared = dir_name
+    def value(self):
+        for name in self.__slots__:
+            attr = getattr(self, name)
+            if attr is not None:
+                return attr
+
+
+class Config(dict):
+    __defaults = {
+        'FOLLOW_IMPORTS': True,
+        'BUILTINS': sys.builtin_module_names + ('_socket', 'datetime'),
+        'TARGET_NAME': None,
+        'TARGET_PATH': None,
+        'VERBOSE': False,
+        'ANALYZE_BUILTINS': True
+    }
+
+    def __init__(self, *args, **kwargs):
+        super(Config, self).__init__(self.__defaults)
+        self.merge_with(dict(*args, **kwargs))
+
+    def merge_with(self, other, override=False):
+        for k, v in other.items():
+            if k not in self or self[k] is None:
+                self[k] = v
+            elif isinstance(self[k], list) and isinstance(v, list):
+                self[k] = self[k] + v
+            elif self[k] == v:
+                pass
+            elif override:
+                self[k] = v
             else:
-                prepared, _ = os.path.splitext(relative)
-            return prepared.replace(os.path.sep, '.').strip('.')
-    raise ValueError('Unresolved module: path={!r}'.format(path))
+                raise ValueError('Cannot merge {!r} with {!r}'.format(self, other))
 
 
-def module_to_path(module_name):
-    rel_path = os.path.join(*module_name.split('.'))
-    for src_root in SRC_ROOTS + sys.path:
-        path = os.path.join(src_root, rel_path)
-        package_path = os.path.join(path, '__init__.py')
-        if os.path.isfile(package_path):
-            return package_path
-        module_path = path + '.py'
-        if os.path.isfile(module_path):
-            return os.path.abspath(module_path)
-    raise ValueError('Unresolved module: name={!r}'.format(module_name))
+class GreenTypeAnalyzer(object):
+    def __init__(self, project_root, source_roots=None):
+        self.indexes = {
+            'MODULE_INDEX': Index(None),
+            'CLASS_INDEX': Index(None),
+            'FUNCTION_INDEX': Index(None),
+            'PARAMETER_INDEX': Index(None),
+            'CLASS_ATTRIBUTE_INDEX': Index(set)
+        }
+
+        self.config = Config()
+        self.config['PROJECT_ROOT'] = project_root
+        if not source_roots:
+            source_roots = [project_root]
+        else:
+            source_roots = list(source_roots)
+            source_roots.insert(0, project_root)
+        self.config['SOURCE_ROOTS'] = source_roots
+
+    @property
+    def statistics(self):
+        return StatisticReport(self)
+
+    @property
+    def project_root(self):
+        return self.config['PROJECT_ROOT']
+
+    @property
+    def source_roots(self):
+        return self.config['SOURCE_ROOTS']
+
+    def invalidate_indexes(self):
+        for index in self.indexes.values():
+            index.clear()
+
+    def index_module(self, path=None, name=None):
+        if name is None and path is None:
+            raise ValueError('Either module name or module path should be given')
+
+        if path is not None:
+            try:
+                name = self.path_to_module_name(path)
+            except ValueError as e:
+                LOG.warning(e)
+                return None
+            loaded = self.indexes['MODULE_INDEX'].get(name)
+            if loaded:
+                return loaded
+            module_indexed = SourceModuleIndexer(self, path).run()
+        else:
+            loaded = self.indexes['MODULE_INDEX'].get(name)
+            if loaded:
+                return loaded
+            try:
+                path = self.module_name_to_path(name)
+            except ValueError as e:
+                LOG.warning(e)
+                return None
+            module_indexed = SourceModuleIndexer(self, path).run()
+
+        if self.config['FOLLOW_IMPORTS']:
+            for imp in module_indexed.imports:
+                if not imp.import_from or imp.star_import:
+                    # for imports of form
+                    # >>> for import foo.bar
+                    # or
+                    # >>> from foo.bar import *
+                    # go straight to 'foo.bar'
+                    self.index_module(name=imp.imported_name)
+                else:
+                    # in case of import of form
+                    # >>> from foo.bar import baz [as quux]
+                    # try to index both modules: foo.bar.baz and foo.bar
+                    # the latter is needed if baz is top-level name in foo/bar/__init__.py
+                    self.index_module(name=imp.imported_name)
+                    self.index_module(name=utils.qname_tail(imp.imported_name))
+        return module_indexed
+
+    def path_to_module_name(self, path):
+        path = os.path.abspath(path)
+        roots = self.source_roots + [p for p in sys.path if p not in ('', '.', os.getcwd())]
+        for src_root in roots:
+            if path.startswith(src_root):
+                # check that on all way up to module correct packages with __init__ exist
+
+                in_proper_package = True
+                # package_path = os.path.dirname(path)
+                # while package_path != src_root:
+                # if not os.path.exists(os.path.join(package_path, '__init__.py')):
+                # in_proper_package = False
+                # break
+                # package_path = os.path.dirname(package_path)
+
+                relative = os.path.relpath(path, src_root)
+                package_path = src_root
+                for comp in relative.split(os.path.sep)[:-1]:
+                    package_path = os.path.join(package_path, comp)
+                    if not os.path.exists(os.path.join(package_path, '__init__.py')):
+                        in_proper_package = False
+                        break
+
+                if not in_proper_package:
+                    continue
+
+                dir_name, base_name = os.path.split(relative)
+                if base_name == '__init__.py':
+                    prepared = dir_name
+                else:
+                    prepared, _ = os.path.splitext(relative)
+                return prepared.replace(os.path.sep, '.').strip('.')
+        raise ValueError('Unresolved module: path={!r}'.format(path))
 
 
-def index_module_by_path(path, recursively=True):
-    try:
-        module_name = path_to_module(path)
-    except ValueError as e:
-        LOG.warning(e)
-        return None
-    loaded = Indexer.MODULE_INDEX.get(module_name)
-    if loaded:
-        return loaded
-    return SourceModuleIndexer(path).run(recursively)
+    def module_name_to_path(self, module_name):
+        rel_path = os.path.join(*module_name.split('.'))
+        for src_root in self.source_roots + sys.path:
+            path = os.path.join(src_root, rel_path)
+            package_path = os.path.join(path, '__init__.py')
+            if os.path.isfile(package_path):
+                return package_path
+            module_path = path + '.py'
+            if os.path.isfile(module_path):
+                return os.path.abspath(module_path)
+        raise ValueError('Unresolved module: name={!r}'.format(module_name))
 
 
-def index_module_by_name(name, recursively=True):
-    loaded = Indexer.MODULE_INDEX.get(name)
-    if loaded:
-        return loaded
-    try:
-        path = module_to_path(name)
-    except ValueError as e:
-        LOG.warning(e)
-        return None
-    return SourceModuleIndexer(path).run(recursively)
+    def index_builtins(self):
+        def object_name(obj):
+            return obj.__name__ if PY2 else obj.__qualname__
+
+        for module_name in self.config['BUILTINS']:
+            LOG.debug('Reflectively analyzing %r', module_name)
+
+            module = importlib.import_module(module_name, None)
+            for module_attr_module_name, module_attr in vars(module).items():
+                if inspect.isclass(module_attr):
+                    cls = module_attr
+                    class_name = module_name + '.' + object_name(cls)
+                    bases = tuple(object_name(b) for b in cls.__bases__)
+                    attributes = set(vars(cls))
+                    class_def = ClassDef(class_name, None, None, bases, attributes)
+                    self.indexes['CLASS_INDEX'][class_name] = class_def
+
+    @memoized
+    def resolve_name(self, name, module, type='class'):
+        """Resolve name using indexes and following import if it's necessary."""
+
+        if type == 'class':
+            index = self.indexes['CLASS_INDEX']
+        elif type == 'function':
+            index = self.indexes['FUNCTION_INDEX']
+        elif type == 'module':
+            index = self.indexes['MODULE_INDEX']
+        else:
+            raise ValueError('Unknown definition type. Should be one of: class, function, module')
+
+        def check_loaded(qname):
+            if qname in index:
+                return index[qname]
+
+        # already properly qualified name or built-in
+        df = check_loaded(name) or check_loaded(BUILTINS + '.' + name)
+        if df:
+            return df
+
+        # not built-in
+        if module:
+            # name defined in the same module
+            df = check_loaded('{}.{}'.format(module.qname, name))
+            if df:
+                return df
+            # name is imported
+            for imp in module.imports:
+                if imp.imports_name(name):
+                    qname = utils.qname_merge(imp.local_name, name)
+                    # TODO: more robust qualified name handling
+                    qname = qname.replace(imp.local_name, imp.imported_name, 1)
+                    # Case 1:
+                    # >>> import some.module as alias
+                    # index some.module, then check some.module.Base
+                    # Case 2:
+                    # >>> from some.module import Base as alias
+                    # index some.module, then check some.module.Base
+                    # if not found index some.module.Base, then check some.module.Base again
+                    df = check_loaded(qname)
+                    if df:
+                        return df
+
+                    if not imp.import_from:
+                        module_loaded = self.index_module(name=imp.imported_name)
+                        if module_loaded:
+                            # drop local name (alias) for imports like
+                            # import module as alias
+                            # print(alias.MyClass.InnerClass())
+                            top_level_name = utils.qname_drop(name, imp.local_name)
+                            df = self.resolve_name(top_level_name, module_loaded, type)
+                            if df:
+                                return df
+                            LOG.info('Module %r referenced as "import %s" in %r loaded '
+                                     'successfully, but class %r not found',
+                                     imp.imported_name, imp.imported_name, module.path, qname)
+                    else:
+                        # first, interpret import like 'from module import Name'
+                        module_name = utils.qname_tail(imp.imported_name)
+                        module_loaded = self.index_module(name=module_name)
+                        if module_loaded:
+                            top_level_name = utils.qname_drop(qname, module_name)
+                            df = self.resolve_name(top_level_name, module_loaded, type)
+                            if df:
+                                return df
+                        # then, as 'from package import module'
+                        module_loaded = self.index_module(name=imp.imported_name)
+                        if module_loaded:
+                            top_level_name = utils.qname_drop(name, imp.local_name)
+                            # TODO: write regression test for
+                            # df = self.resolve_name(qname, top_level_name, type)
+                            df = self.resolve_name(top_level_name, module_loaded, type)
+                            if df:
+                                return df
+                            LOG.info('Module %r referenced as "from %s import %s" in %r loaded '
+                                     'successfully, but class %r not found',
+                                     imp.imported_name, utils.qname_tail(imp.imported_name),
+                                     utils.qname_head(imp.imported_name), module.path,
+                                     qname)
+                elif imp.star_import:
+                    module_loaded = self.index_module(name=imp.imported_name)
+                    if module_loaded:
+                        # no aliased allowed with 'from module import *' so we check directly
+                        # for name searched in the first place
+                        df = self.resolve_name(name, module_loaded, type)
+                        if df:
+                            return df
+
+        LOG.warning('Cannot resolve name %r in module %r', name, module or '<undefined>')
+
+    @memoized
+    def _resolve_bases(self, class_def):
+        LOG.debug('Resolving bases for %r', class_def.qname)
+        bases = set()
+
+        for name in class_def.bases:
+            # fully qualified name or built-in
+            base_def = self.resolve_name(name, class_def.module, 'class')
+            if base_def:
+                bases.add(base_def)
+                bases.update(self._resolve_bases(base_def))
+            else:
+                LOG.warning('Base class %r of %r not found', name, class_def.qname)
+        return bases
 
 
-def index_builtins():
-    builtins = list(sys.builtin_module_names)
-    builtins.append('_socket')
-    if PY2:
-        builtins.append('datetime')
+    def suggest_classes(self, accessed_attrs):
+        def unite(sets):
+            return functools.reduce(set.union, sets, set())
 
-    for module_name in builtins:
-        ReflectiveModuleIndexer(module_name).run()
+        def intersect(sets):
+            if not sets:
+                return {}
+            return functools.reduce(set.intersection, sets)
+
+        class_pool = {attr: self.indexes['CLASS_ATTRIBUTE_INDEX'][attr] for attr in accessed_attrs}
+        if not class_pool:
+            return set()
+        with_any_attribute = unite(class_pool.values())
+
+        # with_all_attributes = intersect(class_pool.values())
+        # suitable_classes = set(with_all_attributes)
+        # for class_def in with_any_attribute - with_all_attributes:
+        # bases = resolve_bases(class_def)
+        # all_attrs = unite(b.attributes for b in bases) | class_def.attributes
+        # if accessed_attrs <= all_attrs:
+        # suitable_classes.add(class_def)
+
+        # More fair algorithm because it considers newly discovered bases classes as well
+        suitable_classes = set()
+        candidates = set(with_any_attribute)
+        checked = set()
+        while candidates:
+            candidate = candidates.pop()
+            checked.add(candidate)
+            bases = self._resolve_bases(candidate)
+            all_attrs = unite(b.attributes for b in bases) | candidate.attributes
+            if accessed_attrs <= all_attrs:
+                suitable_classes.add(candidate)
+            for base in bases:
+                if base in candidates or base in checked:
+                    continue
+                if any(attr in base.attributes for attr in accessed_attrs):
+                    candidates.add(base)
+
+        # remove subclasses if their superclasses is suitable also
+        for cls in suitable_classes.copy():
+            if any(base in suitable_classes for base in self._resolve_bases(cls)):
+                suitable_classes.remove(cls)
+
+        return suitable_classes
 
 
 class Definition(object):
-    def __init__(self, qname, node):
+    def __init__(self, qname, node, module):
         self.qname = qname
         self.node = node
+        self.module = module
 
     @property
     def name(self):
-        return utils.partition_any(self.qname, '#.', from_end=True)[1]
+        _, _, head = self.qname.rpartition('.')
+        return head
+
+    @property
+    def physical(self):
+        return self.module is not None and self.node is not None
 
     def __str__(self):
         return '{}({})'.format(type(self).__name__, self.qname)
@@ -134,9 +450,9 @@ class Definition(object):
         return hash(self.qname)
 
 
-class ModuleDefinition(Definition):
+class ModuleDef(Definition):
     def __init__(self, qname, node, path, imports):
-        super(ModuleDefinition, self).__init__(qname, node)
+        super(ModuleDef, self).__init__(qname, node, self)
         self.path = path
         # top-level imports
         self.imports = imports
@@ -160,10 +476,9 @@ class Import(object):
         return utils.qname_qualified_by(name, self.local_name)
 
 
-class ClassDefinition(Definition):
+class ClassDef(Definition):
     def __init__(self, qname, node, module, bases, attributes):
-        super(ClassDefinition, self).__init__(qname, node)
-        self.module = module
+        super(ClassDef, self).__init__(qname, node, module)
         self.bases = bases
         self.attributes = attributes
 
@@ -171,10 +486,9 @@ class ClassDefinition(Definition):
         return 'class {}({})'.format(self.qname, ', '.join(self.bases))
 
 
-class FunctionDefinition(Definition):
+class FunctionDef(Definition):
     def __init__(self, qname, node, module, parameters):
-        super(FunctionDefinition, self).__init__(qname, node)
-        self.module = module
+        super(FunctionDef, self).__init__(qname, node, module)
         self.parameters = parameters
 
     def unbound_parameters(self):
@@ -188,8 +502,9 @@ class FunctionDefinition(Definition):
         return 'def {}({})'.format(self.qname, ', '.join(p.name for p in self.parameters))
 
 
-class Parameter(object):
-    def __init__(self, qname, attributes):
+class ParameterDef(Definition):
+    def __init__(self, qname, attributes, node, module):
+        super(ParameterDef, self).__init__(qname, node, module)
         self.qname = qname
         self.attributes = attributes
         self.suggested_types = set()
@@ -197,10 +512,6 @@ class Parameter(object):
         self.used_directly = 0
         self.used_as_operand = 0
         self.returned = 0
-
-    @property
-    def name(self):
-        return utils.partition_any(self.qname, '#.', from_end=True)[1]
 
     def __str__(self):
         s = '{}::{}'.format(self.qname, StructuralType(self.attributes))
@@ -291,48 +602,38 @@ class UsagesCollector(AttributesCollector):
                     self.used_as_operand += 1
 
 
-class Indexer(object):
-    CLASS_INDEX = {}
-    CLASS_ATTRIBUTE_INDEX = defaultdict(set)
-    FUNCTION_INDEX = {}
-    PARAMETERS_INDEX = {}
-    MODULE_INDEX = {}
-
-    def run(self, *args, **kwargs):
-        raise NotImplementedError()
-
-    def register_class(self, class_def):
-        Indexer.CLASS_INDEX[class_def.qname] = class_def
-        for attr in self.collect_class_attributes(class_def):
-            Indexer.CLASS_ATTRIBUTE_INDEX[attr].add(class_def)
-
-    def register_function(self, func_def):
-        Indexer.FUNCTION_INDEX[func_def.qname] = func_def
-        for param in func_def.parameters:
-            Indexer.PARAMETERS_INDEX[param.qname] = param
-
-    def register_module(self, module_def):
-        Indexer.MODULE_INDEX[module_def.qname] = module_def
-
-    def register(self, definition):
-        if isinstance(definition, ClassDefinition):
-            self.register_class(definition)
-        elif isinstance(definition, FunctionDefinition):
-            self.register_function(definition)
-        raise TypeError('Unknown definition: {}'.format(definition))
-
-    def collect_class_attributes(self, class_def):
-        return class_def.attributes
-
-
-class SourceModuleIndexer(Indexer, ast.NodeVisitor):
-    def __init__(self, path):
-        super(SourceModuleIndexer, self).__init__()
+class SourceModuleIndexer(ast.NodeVisitor):
+    def __init__(self, analyzer, path):
+        self.analyzer = analyzer
+        self.indexes = analyzer.indexes
         self.module_path = os.path.abspath(path)
         self.scopes_stack = []
         self.module_def = None
         self.depth = 0
         self.root = None
+
+    def register_class(self, class_def):
+        self.indexes['CLASS_INDEX'][class_def.qname] = class_def
+        for attr in self.collect_class_attributes(class_def):
+            self.indexes['CLASS_ATTRIBUTE_INDEX'][attr].add(class_def)
+
+    def register_function(self, func_def):
+        self.indexes['FUNCTION_INDEX'][func_def.qname] = func_def
+        for param_def in func_def.parameters:
+            self.indexes['PARAMETER_INDEX'][param_def.qname] = param_def
+
+    def register_module(self, module_def):
+        self.indexes['MODULE_INDEX'][module_def.qname] = module_def
+
+    def register(self, definition):
+        if isinstance(definition, ClassDef):
+            self.register_class(definition)
+        elif isinstance(definition, FunctionDef):
+            self.register_function(definition)
+        raise TypeError('Unknown definition: {}'.format(definition))
+
+    def collect_class_attributes(self, class_def):
+        return class_def.attributes
 
     def qualified_name(self, node):
         node_name = ast_utils.node_name(node)
@@ -341,31 +642,12 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
             return scope_owner.qname + '.' + node_name
         return node_name
 
-    def run(self, recursively=True):
-        if path_to_module(self.module_path) in Indexer.MODULE_INDEX:
-            return
-
+    def run(self):
         LOG.debug('Indexing module %r', self.module_path)
         with open(self.module_path) as f:
             self.root = ast.parse(f.read(), self.module_path)
         ast_utils.interlink_ast(self.root)
         self.visit(self.root)
-        if recursively and self.module_def:
-            for imp in self.module_def.imports:
-                if not imp.import_from or imp.star_import:
-                    # for imports of form
-                    # >>> for import foo.bar
-                    # or
-                    # >>> from foo.bar import *
-                    # go straight to 'foo.bar'
-                    index_module_by_name(imp.imported_name, recursively)
-                else:
-                    # in case of import of form
-                    # >>> from foo.bar import baz [as quux]
-                    # try to index both modules: foo.bar.baz and foo.bar
-                    # the latter is needed if baz is top-level name in foo/bar/__init__.py
-                    index_module_by_name(imp.imported_name, recursively)
-                    index_module_by_name(utils.qname_tail(imp.imported_name), recursively)
         return self.module_def
 
     def visit(self, node):
@@ -416,7 +698,7 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
                     # correctly handle absolute/relative names, drives etc.
                     for _ in range(child.level):
                         package_path = os.path.dirname(package_path)
-                    package = path_to_module(package_path)
+                    package = self.analyzer.path_to_module_name(package_path)
                 else:
                     package = ''
                 if child.module and package:
@@ -437,8 +719,8 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
                         imported_name = '{}.{}'.format(target_module, alias.name)
                         imports.append(
                             Import(imported_name, alias.asname or alias.name, True, False))
-        module_def = ModuleDefinition(path_to_module(self.module_path), node, self.module_path,
-                                      imports)
+        module_name = self.analyzer.path_to_module_name(self.module_path)
+        module_def = ModuleDef(module_name, node, self.module_path, imports)
         self.register_module(module_def)
         return module_def
 
@@ -468,8 +750,7 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
                     self.attributes.add(target.id)
 
         class_attributes = ClassAttributeCollector().collect(node)
-        class_def = ClassDefinition(class_name, node, self.module_def, bases_names,
-                                    class_attributes)
+        class_def = ClassDef(class_name, node, self.module_def, bases_names, class_attributes)
         self.register_class(class_def)
         return class_def
 
@@ -479,7 +760,7 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
         parent_scope = self.parent_scope()
 
         decorators = [ast_utils.attributes_chain_to_name(d) for d in node.decorator_list]
-        if isinstance(parent_scope, ClassDefinition) and \
+        if isinstance(parent_scope, ClassDef) and \
                 not ('staticmethod' in decorators or 'classmethod' in decorators):
             declared_params = args.args[1:]
         else:
@@ -507,7 +788,7 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
                 param_name = arg.arg
             attributes = SimpleAttributesCollector(param_name).collect(node.body)
             param_qname = func_name + '.' + param_name
-            param = Parameter(param_qname, attributes)
+            param = ParameterDef(param_qname, attributes, None, self.module_def)
             collector = UsagesCollector(param_name)
             collector.collect(node.body)
             param.used_as_argument = collector.used_as_argument
@@ -516,37 +797,16 @@ class SourceModuleIndexer(Indexer, ast.NodeVisitor):
             param.returned = collector.returned
             parameters.append(param)
 
-        func_def = FunctionDefinition(func_name, node, self.module_def, parameters)
+        func_def = FunctionDef(func_name, node, self.module_def, parameters)
         self.register_function(func_def)
         return func_def
 
 
-class ReflectiveModuleIndexer(Indexer):
-    def __init__(self, module_name):
-        self.module_name = module_name
-
-    def run(self):
-        LOG.debug('Reflectively analyzing %r', self.module_name)
-
-        def name(obj):
-            return obj.__name__ if PY2 else obj.__qualname__
-
-        module = importlib.import_module(self.module_name, None)
-        module_def = ModuleDefinition(self.module_name, None, None, ())
-        for module_attr_name, module_attr in vars(module).items():
-            if inspect.isclass(module_attr):
-                cls = module_attr
-                class_name = self.module_name + '.' + name(cls)
-                bases = tuple(name(b) for b in cls.__bases__)
-                attributes = set(vars(cls))
-                self.register_class(ClassDefinition(class_name, None, None, bases, attributes))
-        self.register_module(module_def)
-
-
-class Statistic(object):
-    def __init__(self, total=True, prolific_params=True, param_types=True,
+class StatisticReport(object):
+    def __init__(self, analyzer, total=True, prolific_params=True, param_types=True,
                  dump_functions=False, dump_classes=False, dump_params=False,
                  top_size=20, prefix='', dump_usages=False, random_inferred=True):
+        self.analyzer = analyzer
         self.show_total = total
         self.show_prolific_params = prolific_params
         self.show_param_types = param_types
@@ -558,60 +818,63 @@ class Statistic(object):
         self.top_size = top_size
         self.prefix = prefix
 
-    @property
-    def parameters(self):
-        return list(Indexer.PARAMETERS_INDEX.values())
+    def parameters(self, in_project=False):
+        parameters_ = self.analyzer.indexes['PARAMETER_INDEX'].values()
+        if not in_project:
+            return list(parameters_)
+        return self._filter_project(parameters_)
 
-    @property
-    def classes(self):
-        return list(Indexer.CLASS_INDEX.values())
+    def classes(self, in_project=False):
+        classes_ = self.analyzer.indexes['CLASS_INDEX'].values()
+        if not in_project:
+            return list(classes_)
+        return self._filter_project(classes_)
 
-    @property
-    def functions(self):
-        return list(Indexer.FUNCTION_INDEX.values())
+    def functions(self, in_project=False):
+        functions_ = self.analyzer.indexes['FUNCTION_INDEX'].values()
+        if not in_project:
+            return list(functions_)
+        return self._filter_project(functions_)
 
     def total_functions(self):
-        return len(Indexer.FUNCTION_INDEX)
+        return len(self.functions())
 
     def total_classes(self):
-        return len(Indexer.CLASS_INDEX)
+        return len(self.classes())
 
     def total_attributes(self):
-        return len(Indexer.CLASS_ATTRIBUTE_INDEX)
+        return len(self.analyzer.indexes['PARAMETER_INDEX'])
 
     def total_parameters(self):
-        return len(Indexer.PARAMETERS_INDEX)
+        return len(self.parameters())
 
-    def _definitions_under_path(self, definitions, path):
+    def _filter_project(self, definitions):
+        return self._filter_path_prefix(definitions, self.analyzer.project_root)
+
+    def _filter_path_prefix(self, definitions, path):
         result = []
         for definition in definitions:
             if definition.module and definition.module.path.startswith(path):
                 result.append(definition)
         return result
 
-    def _filter_prefix(self, definitions):
+    def _filter_name_prefix(self, definitions):
         return (d for d in definitions if d.qname.startswith(self.prefix))
 
     def attributeless_params(self):
-        return [p for p in Indexer.PARAMETERS_INDEX.values() if not p.attributes]
+        return [p for p in self.parameters(True) if not p.attributes]
 
     def undefined_parameters(self):
-        return [p for p in Indexer.PARAMETERS_INDEX.values() if
-                p.attributes and not p.suggested_types]
+        return [p for p in self.parameters(True) if p.attributes and not p.suggested_types]
 
     def inferred_parameters(self):
-        return [p for p in Indexer.PARAMETERS_INDEX.values() if len(p.suggested_types) == 1]
+        return [p for p in self.parameters(True) if len(p.suggested_types) == 1]
 
     def scattered_parameters(self):
-        return [p for p in Indexer.PARAMETERS_INDEX.values() if len(p.suggested_types) > 1]
+        return [p for p in self.parameters(True) if len(p.suggested_types) > 1]
 
     def top_parameters_with_most_attributes(self, n, exclude_self=True):
-        if exclude_self:
-            # params = itertools.chain.from_iterable(f.unbound_parameters() for f in _functions_index.values())
-            params = [p for p in Indexer.PARAMETERS_INDEX.values() if p.name != 'self']
-        else:
-            params = Indexer.PARAMETERS_INDEX.values()
-        return heapq.nlargest(n, params, key=lambda x: len(x.attributes))
+        return heapq.nlargest(n, self.parameters(True), key=lambda x: len(x.attributes))
 
     def top_parameters_with_scattered_types(self, n):
         return heapq.nlargest(n, self.scattered_parameters(), key=lambda x: len(x.suggested_types))
@@ -619,7 +882,7 @@ class Statistic(object):
     def sample_parameters_with_unresolved_types(self, n):
         # [p for p in Indexer.PARAMETERS_INDEX.values() if p.attributes and not p.suggested_types][:n]
         result = []
-        for param in Indexer.PARAMETERS_INDEX.values():
+        for param in self.parameters(True):
             if param.attributes and not param.suggested_types:
                 result.append(param)
             if len(result) > n:
@@ -628,7 +891,7 @@ class Statistic(object):
 
     def sample_parameters_not_used_anywhere(self, n):
         result = []
-        for param in Indexer.PARAMETERS_INDEX.values():
+        for param in self.parameters(True):
             if not param.attributes and not param.used_directly:
                 result.append(param)
             if len(result) > n:
@@ -638,11 +901,18 @@ class Statistic(object):
     def format(self):
         formatted = ''
         if self.show_total:
-            formatted += 'Total indexed: {} classes with {} attributes, ' \
-                         '{} functions with {} parameters'.format(self.total_classes(),
-                                                                  self.total_attributes(),
-                                                                  self.total_functions(),
-                                                                  self.total_parameters())
+            formatted += '\nTotal indexed: {} classes with {} attributes, ' \
+                         '{} functions with {} parameters'.format(
+                len(self.parameters()),
+                len(self.analyzer.indexes['CLASS_ATTRIBUTE_INDEX']),
+                len(self.functions()),
+                len(self.parameters()))
+
+            formatted += '\nIn project: {} classes, {} functions with {} parameters'.format(
+                len(self.parameters(True)),
+                len(self.functions(True)),
+                len(self.parameters(True)))
+
         if self.show_prolific_params:
             prolific_params = self.top_parameters_with_most_attributes(self.top_size)
             formatted += self._format_list(
@@ -652,7 +922,7 @@ class Statistic(object):
             )
 
         if self.show_param_types:
-            total_params = len(Indexer.PARAMETERS_INDEX)
+            total_params = len(self.parameters(True))
             attributeless_params = self.attributeless_params()
             total_attributeless = len(attributeless_params)
             total_undefined = len(self.undefined_parameters())
@@ -666,9 +936,9 @@ class Statistic(object):
                 - {:.2%} passed as arguments to other function
                 - {:.2%} used as operands in arithmetic or logical expressions
                 - {:.2%} returned from function
-              {} ({:.2%}) parameters have some parameters, but no type inferred,
-              {} ({:.2%}) parameters have exactly one type inferred,
-              {} ({:.2%}) parameters have more then one inferred type (scattered types)
+              {} ({:.2%}) parameters with accessed attributes, but with no inferred type,
+              {} ({:.2%}) parameters with accessed attributes and exactly one inferred type,
+              {} ({:.2%}) parameters with accessed attributes and more than one inferred type
             """.format(
                 total_attributeless, (total_attributeless / total_params),
                 sum(p.used_directly > 0 for p in attributeless_params) / total_attributeless,
@@ -698,7 +968,7 @@ class Statistic(object):
             )
 
         if self.show_random_inferred:
-            params = list(self._filter_prefix(self.inferred_parameters()))
+            params = list(self._filter_name_prefix(self.inferred_parameters()))
             quantity = min(self.top_size, len(params))
             formatted += self._format_list(
                 header='Parameters with definitively inferred types '
@@ -707,13 +977,13 @@ class Statistic(object):
             )
 
         if self.dump_classes:
-            classes = self._filter_prefix(Indexer.CLASS_INDEX.values())
+            classes = self._filter_name_prefix(self.classes(True))
             formatted += self._format_list(header='Classes:', items=classes)
         if self.dump_functions:
-            functions = self._filter_prefix(Indexer.FUNCTION_INDEX.values())
+            functions = self._filter_name_prefix(self.functions(True))
             formatted += self._format_list(header='Functions:', items=functions)
         if self.dump_params:
-            parameters = self._filter_prefix(Indexer.PARAMETERS_INDEX.values())
+            parameters = self._filter_name_prefix(self.parameters(True))
             chunks = []
             for param in sorted(parameters, key=operator.attrgetter('qname')):
                 chunks.append(textwrap.dedent("""\
@@ -761,151 +1031,3 @@ class Statistic(object):
                     blocks.append(utils.indent(item_text, indent))
             formatted += '\n'.join(blocks)
         return formatted + '\n'
-
-
-@utils.memo
-def resolve_name(name, module, type):
-    """Resolve name using indexes and following import if it's necessary."""
-
-    def check_loaded(qname):
-        if type is ClassDefinition:
-            definition = Indexer.CLASS_INDEX.get(qname)
-        else:
-            definition = Indexer.FUNCTION_INDEX.get(qname)
-        return definition
-
-    # already properly qualified name or built-in
-    df = check_loaded(name) or check_loaded(BUILTINS + '.' + name)
-    if df:
-        return df
-
-    # not built-in
-    if module:
-        # name defined in the same module
-        df = check_loaded('{}.{}'.format(module.qname, name))
-        if df:
-            return df
-        # name is imported
-        for imp in module.imports:
-            if imp.imports_name(name):
-                qname = utils.qname_merge(imp.local_name, name)
-                # TODO: more robust qualified name handling
-                qname = qname.replace(imp.local_name, imp.imported_name, 1)
-                # Case 1:
-                # >>> import some.module as alias
-                # index some.module, then check some.module.Base
-                # Case 2:
-                # >>> from some.module import Base as alias
-                # index some.module, then check some.module.Base
-                # if not found index some.module.Base, then check some.module.Base again
-                df = check_loaded(qname)
-                if df:
-                    return df
-
-                if not imp.import_from:
-                    module_loaded = index_module_by_name(imp.imported_name)
-                    if module_loaded:
-                        # drop local name (alias) for imports like
-                        # import module as alias
-                        # print(alias.MyClass.InnerClass())
-                        top_level_name = utils.qname_drop(name, imp.local_name)
-                        df = resolve_name(top_level_name, module_loaded, type)
-                        if df:
-                            return df
-                        LOG.info('Module %r referenced as "import %s" in %r loaded '
-                                 'successfully, but class %r not found',
-                                 imp.imported_name, imp.imported_name, module.path, qname)
-                else:
-                    # first, interpret import like 'from module import Name'
-                    module_name = utils.qname_tail(imp.imported_name)
-                    module_loaded = index_module_by_name(module_name)
-                    if module_loaded:
-                        top_level_name = utils.qname_drop(qname, module_name)
-                        df = resolve_name(top_level_name, module_loaded, type)
-                        if df:
-                            return df
-                    # then, as 'from package import module'
-                    module_loaded = index_module_by_name(imp.imported_name)
-                    if module_loaded:
-                        top_level_name = utils.qname_drop(name, imp.local_name)
-                        df = resolve_name(qname, top_level_name, type)
-                        if df:
-                            return df
-                        LOG.info('Module %r referenced as "from %s import %s" in %r loaded '
-                                 'successfully, but class %r not found',
-                                 imp.imported_name, utils.qname_tail(imp.imported_name),
-                                 utils.qname_head(imp.imported_name), module.path,
-                                 qname)
-            elif imp.star_import:
-                module_loaded = index_module_by_name(imp.imported_name)
-                if module_loaded:
-                    # no aliased allowed with 'from module import *' so we check directly
-                    # for name searched in the first place
-                    df = resolve_name(name, module_loaded, type)
-                    if df:
-                        return df
-
-    LOG.warning('Cannot resolve name %r in module %r', name, module or '<undefined>')
-
-
-@utils.memo
-def resolve_bases(class_def):
-    LOG.debug('Resolving bases for %r', class_def.qname)
-    bases = set()
-
-    for name in class_def.bases:
-        # fully qualified name or built-in
-        base_def = resolve_name(name, class_def.module, ClassDefinition)
-        if base_def:
-            bases.add(base_def)
-            bases.update(resolve_bases(base_def))
-        else:
-            LOG.warning('Base class %r of %r not found', name, class_def.qname)
-    return bases
-
-
-def suggest_classes_by_attributes(accessed_attrs):
-    def unite(sets):
-        return functools.reduce(set.union, sets, set())
-
-    def intersect(sets):
-        if not sets:
-            return {}
-        return functools.reduce(set.intersection, sets)
-
-    class_pool = {attr: Indexer.CLASS_ATTRIBUTE_INDEX[attr] for attr in accessed_attrs}
-    if not class_pool:
-        return set()
-    with_any_attribute = unite(class_pool.values())
-
-    # with_all_attributes = intersect(class_pool.values())
-    # suitable_classes = set(with_all_attributes)
-    # for class_def in with_any_attribute - with_all_attributes:
-    # bases = resolve_bases(class_def)
-    # all_attrs = unite(b.attributes for b in bases) | class_def.attributes
-    # if accessed_attrs <= all_attrs:
-    # suitable_classes.add(class_def)
-
-    # More fair algorithm because it considers newly discovered bases classes as well
-    suitable_classes = set()
-    candidates = set(with_any_attribute)
-    checked = set()
-    while candidates:
-        candidate = candidates.pop()
-        checked.add(candidate)
-        bases = resolve_bases(candidate)
-        all_attrs = unite(b.attributes for b in bases) | candidate.attributes
-        if accessed_attrs <= all_attrs:
-            suitable_classes.add(candidate)
-        for base in bases:
-            if base in candidates or base in checked:
-                continue
-            if any(attr in base.attributes for attr in accessed_attrs):
-                candidates.add(base)
-
-    # remove subclasses if their superclasses is suitable also
-    for cls in suitable_classes.copy():
-        if any(base in suitable_classes for base in resolve_bases(cls)):
-            suitable_classes.remove(cls)
-
-    return suitable_classes

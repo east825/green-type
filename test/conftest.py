@@ -11,34 +11,42 @@ TEST_ROOT = os.path.dirname(__file__)
 TEST_DATA_ROOT = os.path.join(TEST_ROOT, 'test_data')
 
 
+class TestAnalyzer(core.GreenTypeAnalyzer):
+
+    def __init__(self, project_root, source_roots=None):
+        super(TestAnalyzer, self).__init__(project_root, source_roots)
+        self.config['FOLLOW_IMPORTS'] = False
+
+    def assert_resolved(self, target_module, local_name, real_name):
+        module = self.index_module(path=target_module)
+        assert module is not None
+        resolved = self.resolve_name(local_name, module)
+        assert resolved is not None
+        assert resolved.qname == real_name
+
+    @contextmanager
+    def roots(self, *roots):
+        if not roots:
+            roots = [os.getcwd()]
+        old_roots = self.config['SOURCE_ROOTS']
+        self.config['SOURCE_ROOTS'] = list(map(os.path.abspath, roots))
+        old_cwd = os.getcwd()
+        os.chdir(roots[0])
+        try:
+            yield
+        finally:
+            os.chdir(old_cwd)
+            self.config['SOURCE_ROOTS'] = old_roots
+
+
 @pytest.fixture()
-def in_test_data_dir(request):
+def analyzer(request):
     test_data_dir = getattr(request.module, 'TEST_DATA_DIR', None)
     if test_data_dir:
         os.chdir(os.path.join(TEST_DATA_ROOT, test_data_dir))
     else:
         os.chdir(TEST_DATA_ROOT)
+    return TestAnalyzer(os.getcwd())
 
 
-@pytest.fixture()
-def invalidate_caches():
-    core.Indexer.CLASS_INDEX.clear()
-    core.Indexer.CLASS_ATTRIBUTE_INDEX.clear()
-    core.Indexer.FUNCTION_INDEX.clear()
-    core.Indexer.PARAMETERS_INDEX.clear()
-    core.Indexer.MODULE_INDEX.clear()
 
-
-@contextmanager
-def sources_roots(*roots):
-    if not roots:
-        roots = [os.getcwd()]
-    old_roots = core.SRC_ROOTS
-    core.SRC_ROOTS = list(map(os.path.abspath, roots))
-    old_cwd = os.getcwd()
-    os.chdir(roots[0])
-    try:
-        yield
-    finally:
-        os.chdir(old_cwd)
-        core.SRC_ROOTS = old_roots

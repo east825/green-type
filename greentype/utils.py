@@ -73,16 +73,25 @@ def qname_qualified_by(name, qualifier):
     return name == qualifier or name.startswith(qualifier + '.')
 
 
-def memo(f):
+def method_decorator(decorator):
+    def new_decorator(f):
+        @functools.wraps(f)
+        def wrapper(self, *args, **kwargs):
+            return decorator(functools.partial(f, self))(*args, **kwargs)
+
+        return wrapper
+
+    return new_decorator
+
+
+def memoized(f):
     results = {}
     missing = object()
 
     @functools.wraps(f)
     def wrapper(*args):
         r = results.get(args, missing)
-        from greentype import core
-
-        if r is missing or core.TEST_MODE:
+        if r is missing:
             r = results[args] = f(*args)
         return r
 
@@ -131,7 +140,6 @@ def indent(s, indent):
         return textwrap.indent(s, indent)
     lines = s.splitlines(True)
     return ''.join(indent + line for line in lines)
-
 
 
 
