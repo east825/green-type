@@ -78,7 +78,9 @@ def method_decorator(decorator):
     def new_decorator(f):
         @functools.wraps(f)
         def wrapper(self, *args, **kwargs):
-            return decorator(functools.partial(f, self))(*args, **kwargs)
+            bounded = functools.partial(f, self)
+            functools.update_wrapper(bounded, f)
+            return decorator(bounded)(*args, **kwargs)
 
         return wrapper
 
@@ -167,6 +169,3 @@ def indent(s, indent):
         return textwrap.indent(s, indent)
     lines = s.splitlines(True)
     return ''.join(indent + line for line in lines)
-
-
-
