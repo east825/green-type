@@ -16,6 +16,7 @@ class TestAnalyzer(core.GreenTypeAnalyzer):
     def __init__(self, project_root):
         super(TestAnalyzer, self).__init__(project_root)
         self.config['FOLLOW_IMPORTS'] = False
+        self._inferred_types = False
 
     def assert_resolved(self, target_module, local_name, real_name):
         module = self.index_module(path=target_module)
@@ -23,6 +24,15 @@ class TestAnalyzer(core.GreenTypeAnalyzer):
         resolved = self.resolve_name(local_name, module)
         assert resolved is not None
         assert resolved.qname == real_name
+
+    def assert_inferred(self, param_name, class_names):
+        if not self._inferred_types:
+            self.infer_parameter_types()
+            self._inferred_types = True
+
+        param = self.indexes['PARAMETER_INDEX'][param_name]
+        assert set(class_names) == set(c.qname for c in param.suggested_types)
+
 
     @contextmanager
     def roots(self, *roots):

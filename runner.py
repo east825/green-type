@@ -31,7 +31,7 @@ def main():
                         dest='ANALYZE_BUILTINS',
                         help='Not analyze built-in modules reflectively first.')
 
-    parser.add_argument('-d', '--dump-parameters', action='store_true',
+    parser.add_argument('-d', '--dump-params', action='store_true',
                         help='Dump parameters qualified by target.')
 
     parser.add_argument('-v', '--verbose', action='store_true',
@@ -92,10 +92,11 @@ def main():
                         continue
                     analyzer.index_module(abs_path)
 
+        analyzer.infer_parameter_types()
+
         # TODO: analyze newly found functions as well
         statistics = analyzer.statistics_report
-        for param in statistics.project_parameters:
-            param.suggested_types = analyzer.suggest_classes(param.attributes)
+        statistics.dump_params = args.dump_params
         if args.json:
             print(statistics.format_json(with_samples=True))
         else:

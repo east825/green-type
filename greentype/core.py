@@ -148,8 +148,8 @@ class GreenTypeAnalyzer(object):
         # if not source_roots:
         # source_roots = [project_root]
         # else:
-        #     source_roots = list(source_roots)
-        #     source_roots.insert(0, project_root)
+        # source_roots = list(source_roots)
+        # source_roots.insert(0, project_root)
         if not target_path:
             target_path = project_root
 
@@ -168,6 +168,26 @@ class GreenTypeAnalyzer(object):
     @property
     def source_roots(self):
         return self.config['SOURCE_ROOTS']
+
+    def _filter_root(self, definitions):
+        return [d for d in definitions
+                if d.module and d.module.path.startswith(self.project_root)]
+
+    @property
+    def project_modules(self):
+        return self._filter_root(self.indexes['MODULE_INDEX'].values())
+
+    @property
+    def project_classes(self):
+        return self._filter_root(self.indexes['CLASS_INDEX'].values())
+
+    @property
+    def project_functions(self):
+        return self._filter_root(self.indexes['FUNCTION_INDEX'].values())
+
+    @property
+    def project_parameters(self):
+        return self._filter_root(self.indexes['PARAMETER_INDEX'].values())
 
     def invalidate_indexes(self):
         for index in self.indexes.values():
@@ -280,6 +300,8 @@ class GreenTypeAnalyzer(object):
                     attributes = set(vars(cls))
                     class_def = ClassDef(class_name, None, None, bases, attributes)
                     self.indexes['CLASS_INDEX'][class_name] = class_def
+                    for attr in attributes:
+                        self.indexes['CLASS_ATTRIBUTE_INDEX'][attr].add(class_def)
 
     @memoized
     def resolve_name(self, name, module, type='class'):
@@ -385,6 +407,10 @@ class GreenTypeAnalyzer(object):
             else:
                 LOG.warning('Base class %r of %r not found', name, class_def.qname)
         return bases
+
+    def infer_parameter_types(self):
+        for param in self.project_parameters:
+            param.suggested_types = self.suggest_classes(param.attributes)
 
 
     def suggest_classes(self, accessed_attrs):
@@ -818,41 +844,31 @@ class SourceModuleIndexer(ast.NodeVisitor):
 
 
 class StatisticsReport(object):
-    def __init__(self, analyzer, total=True, prolific_params=True, param_types=True,
-                 dump_functions=False, dump_classes=False, dump_params=False,
-                 top_size=20, prefix='', dump_usages=False, random_inferred=True):
+    def __init__(self, analyzer):
         self.analyzer = analyzer
-        self.show_total = total
-        self.show_prolific_params = prolific_params
-        self.show_param_types = param_types
-        self.show_random_inferred = random_inferred
-        self.dump_functions = dump_functions
-        self.dump_classes = dump_classes
-        self.dump_params = dump_params
-        self.dump_usages = dump_usages
-        self.top_size = top_size
-        self.prefix = prefix
+        self.show_total = True
+        self.show_prolific_params = True
+        self.show_param_types = True
+        self.show_random_inferred = True
+        self.dump_functions = False
+        self.dump_classes = False
+        self.dump_params = True
+        self.dump_usages = False
+        self.top_size = 20
+        self.prefix = analyzer.config['TARGET_NAME'] or ''
 
         self.modules = list(analyzer.indexes['MODULE_INDEX'].values())
         self.classes = list(analyzer.indexes['CLASS_INDEX'].values())
         self.functions = list(analyzer.indexes['FUNCTION_INDEX'].values())
         self.parameters = list(analyzer.indexes['PARAMETER_INDEX'].values())
 
-        self.project_modules = self._filter_project(self.modules)
-        self.project_classes = self._filter_project(self.classes)
-        self.project_functions = self._filter_project(self.functions)
-        self.project_parameters = self._filter_project(self.parameters)
-
-    def _filter_project(self, definitions):
-        path = self.analyzer.project_root
-        result = []
-        for definition in definitions:
-            if definition.module and definition.module.path.startswith(path):
-                result.append(definition)
-        return result
+        self.project_modules = list(self.analyzer.project_modules)
+        self.project_classes = list(self.analyzer.project_classes)
+        self.project_functions = list(self.analyzer.project_functions)
+        self.project_parameters = list(self.analyzer.project_parameters)
 
     def _filter_name_prefix(self, definitions):
-        return (d for d in definitions if d.qname.startswith(self.prefix))
+        return [d for d in definitions if d.qname.startswith(self.prefix)]
 
     @property
     def attributeless_parameters(self):
