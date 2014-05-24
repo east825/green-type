@@ -12,28 +12,48 @@ from greentype import utils
 logging.basicConfig(level=logging.CRITICAL)
 LOG = logging.getLogger(__name__)
 
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--src-roots', default='', help='Sources roots separated by colon.')
-    parser.add_argument('-t', '--target', default='', help='Target qualifier to restrict output.')
-    parser.add_argument('-r', '--recursively', action='store_true',
+    parser.add_argument('--src-roots', type=lambda x: x.split(':'), default=[],
+                        dest='SOURCE_ROOTS',
+                        help='Sources roots separated by colon.')
+
+    parser.add_argument('-t', '--target', default='',
+                        dest='TARGET_NAME',
+                        help='Target qualifier to restrict output.')
+
+    parser.add_argument('-L', '--follow-imports', action='store_true',
+                        dest='FOLLOW_IMPORTS',
                         help='Follow imports during indexing.')
-    parser.add_argument('-B', '--no-builtins', action='store_true',
+
+    parser.add_argument('-B', '--no-builtins', action='store_false',
+                        dest='ANALYZE_BUILTINS',
                         help='Not analyze built-in modules reflectively first.')
+
     parser.add_argument('-d', '--dump-parameters', action='store_true',
-                        help='Dump parameters qualified by target')
-    parser.add_argument('-v', '--verbose', action='store_true', help='Enable DEBUG logging level.')
-    parser.add_argument('path', help='Path to single Python module or directory.')
+                        help='Dump parameters qualified by target.')
+
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        dest='VERBOSE',
+                        help='Enable DEBUG logging level.')
+
+    parser.add_argument('--json', action='store_true',
+                        help='Dump analysis results in JSON.')
+
+    parser.add_argument('path',
+                        help='Path to single Python module or directory.')
+
     args = parser.parse_args()
 
-    if args.verbose:
+    if args.VERBOSE:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    def normalize(path):
+    def normalize_path(path):
         return os.path.abspath(os.path.expanduser(path))
 
     try:
-        target_path = normalize(args.path)
+        target_path = normalize_path(args.path)
 
         if os.path.isfile(target_path):
             project_root = os.path.dirname(target_path)
@@ -42,18 +62,11 @@ def main():
         else:
             raise ValueError('Unrecognized target {!r}. '
                              'Should be either file or directory.'.format(target_path))
-        analyzer = core.GreenTypeAnalyzer(project_root=project_root,
-                                          source_roots=map(normalize, args.src_roots.split(':')))
 
-        analyzer.config.update(
-            TARGET_PATH=target_path,
-            TARGET_NAME=args.target,
-            ANALYZE_BUILTINS=not args.no_builtins,
-            FOLLOW_IMPORTS=args.recursively,
-            VERBOSE=args.verbose
-        )
+        analyzer = core.GreenTypeAnalyzer(project_root=project_root, target_path=target_path)
+        analyzer.config.update_from_object(args)
 
-        if not args.no_builtins:
+        if analyzer.config['ANALYZE_BUILTINS']:
             analyzer.index_builtins()
 
         print('Analyzing user modules starting from {!r}'.format(args.path))
@@ -80,10 +93,14 @@ def main():
                     analyzer.index_module(abs_path)
 
         # TODO: analyze newly found functions as well
-        statistics = analyzer.statistics
-        for param in statistics.parameters(True):
+        statistics = analyzer.statistics_report
+        for param in statistics.project_parameters:
             param.suggested_types = analyzer.suggest_classes(param.attributes)
-        print(statistics)
+        if args.json:
+            print(statistics.format_json(with_samples=True))
+        else:
+            print(statistics.format_text())
+
     except Exception:
         traceback.print_exc()
 

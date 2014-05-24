@@ -13,8 +13,8 @@ TEST_DATA_ROOT = os.path.join(TEST_ROOT, 'test_data')
 
 class TestAnalyzer(core.GreenTypeAnalyzer):
 
-    def __init__(self, project_root, source_roots=None):
-        super(TestAnalyzer, self).__init__(project_root, source_roots)
+    def __init__(self, project_root):
+        super(TestAnalyzer, self).__init__(project_root)
         self.config['FOLLOW_IMPORTS'] = False
 
     def assert_resolved(self, target_module, local_name, real_name):

@@ -4,6 +4,7 @@ import functools
 import heapq
 import importlib
 import inspect
+import json
 import logging
 from contextlib import contextmanager
 import operator
@@ -94,6 +95,8 @@ class StatisticUnit(object):
 
 
 class Config(dict):
+    """Configuration similar to the one used in Flask."""
+
     __defaults = {
         'FOLLOW_IMPORTS': True,
         'BUILTINS': sys.builtin_module_names + ('_socket', 'datetime'),
@@ -107,22 +110,31 @@ class Config(dict):
         super(Config, self).__init__(self.__defaults)
         self.merge_with(dict(*args, **kwargs))
 
-    def merge_with(self, other, override=False):
+    def merge_with(self, other, override=True):
         for k, v in other.items():
-            if k not in self or self[k] is None:
-                self[k] = v
+            if k not in self:
+                raise ValueError('Unrecognized config parameter {}'.format(k))
+            # merge only lists for now
             elif isinstance(self[k], list) and isinstance(v, list):
                 self[k] = self[k] + v
+            elif self[k] is None or override:
+                self[k] = v
             elif self[k] == v:
                 pass
-            elif override:
-                self[k] = v
             else:
                 raise ValueError('Cannot merge {!r} with {!r}'.format(self, other))
 
+    def update_from_object(self, obj):
+        d = {}
+        for name in dir(obj):
+            # if name in self.__defaults:
+            if name.isupper():
+                d[name] = getattr(obj, name)
+        self.merge_with(d)
+
 
 class GreenTypeAnalyzer(object):
-    def __init__(self, project_root, source_roots=None):
+    def __init__(self, project_root, target_path=None):
         self.indexes = {
             'MODULE_INDEX': Index(None),
             'CLASS_INDEX': Index(None),
@@ -133,16 +145,21 @@ class GreenTypeAnalyzer(object):
 
         self.config = Config()
         self.config['PROJECT_ROOT'] = project_root
-        if not source_roots:
-            source_roots = [project_root]
-        else:
-            source_roots = list(source_roots)
-            source_roots.insert(0, project_root)
-        self.config['SOURCE_ROOTS'] = source_roots
+        # if not source_roots:
+        # source_roots = [project_root]
+        # else:
+        #     source_roots = list(source_roots)
+        #     source_roots.insert(0, project_root)
+        if not target_path:
+            target_path = project_root
+
+        self.config['TARGET_PATH'] = target_path
+
+        self.config['SOURCE_ROOTS'] = [project_root]
 
     @property
-    def statistics(self):
-        return StatisticReport(self)
+    def statistics_report(self):
+        return StatisticsReport(self)
 
     @property
     def project_root(self):
@@ -800,7 +817,7 @@ class SourceModuleIndexer(ast.NodeVisitor):
         return func_def
 
 
-class StatisticReport(object):
+class StatisticsReport(object):
     def __init__(self, analyzer, total=True, prolific_params=True, param_types=True,
                  dump_functions=False, dump_classes=False, dump_params=False,
                  top_size=20, prefix='', dump_usages=False, random_inferred=True):
@@ -816,40 +833,18 @@ class StatisticReport(object):
         self.top_size = top_size
         self.prefix = prefix
 
-    def parameters(self, in_project=False):
-        parameters_ = self.analyzer.indexes['PARAMETER_INDEX'].values()
-        if not in_project:
-            return list(parameters_)
-        return self._filter_project(parameters_)
+        self.modules = list(analyzer.indexes['MODULE_INDEX'].values())
+        self.classes = list(analyzer.indexes['CLASS_INDEX'].values())
+        self.functions = list(analyzer.indexes['FUNCTION_INDEX'].values())
+        self.parameters = list(analyzer.indexes['PARAMETER_INDEX'].values())
 
-    def classes(self, in_project=False):
-        classes_ = self.analyzer.indexes['CLASS_INDEX'].values()
-        if not in_project:
-            return list(classes_)
-        return self._filter_project(classes_)
-
-    def functions(self, in_project=False):
-        functions_ = self.analyzer.indexes['FUNCTION_INDEX'].values()
-        if not in_project:
-            return list(functions_)
-        return self._filter_project(functions_)
-
-    def total_functions(self):
-        return len(self.functions())
-
-    def total_classes(self):
-        return len(self.classes())
-
-    def total_attributes(self):
-        return len(self.analyzer.indexes['PARAMETER_INDEX'])
-
-    def total_parameters(self):
-        return len(self.parameters())
+        self.project_modules = self._filter_project(self.modules)
+        self.project_classes = self._filter_project(self.classes)
+        self.project_functions = self._filter_project(self.functions)
+        self.project_parameters = self._filter_project(self.parameters)
 
     def _filter_project(self, definitions):
-        return self._filter_path_prefix(definitions, self.analyzer.project_root)
-
-    def _filter_path_prefix(self, definitions, path):
+        path = self.analyzer.project_root
         result = []
         for definition in definitions:
             if definition.module and definition.module.path.startswith(path):
@@ -859,60 +854,163 @@ class StatisticReport(object):
     def _filter_name_prefix(self, definitions):
         return (d for d in definitions if d.qname.startswith(self.prefix))
 
-    def attributeless_params(self):
-        return [p for p in self.parameters(True) if not p.attributes]
+    @property
+    def attributeless_parameters(self):
+        """Parameters that has no accessed attributes."""
+        return [p for p in self.project_parameters if not p.attributes]
 
-    def undefined_parameters(self):
-        return [p for p in self.parameters(True) if p.attributes and not p.suggested_types]
+    @property
+    def undefined_type_parameters(self):
+        """Parameters with accessed attributes but no inferred types."""
+        return [p for p in self.project_parameters if p.attributes and not p.suggested_types]
 
-    def inferred_parameters(self):
-        return [p for p in self.parameters(True) if len(p.suggested_types) == 1]
+    @property
+    def exact_type_parameters(self):
+        """Parameters with exactly on inferred type."""
+        return [p for p in self.project_parameters if len(p.suggested_types) == 1]
 
-    def scattered_parameters(self):
-        return [p for p in self.parameters(True) if len(p.suggested_types) > 1]
+    @property
+    def scattered_type_parameters(self):
+        """Parameters with more than one inferred type."""
+        return [p for p in self.project_parameters if len(p.suggested_types) > 1]
 
-    def top_parameters_with_most_attributes(self, n, exclude_self=True):
-        return heapq.nlargest(n, self.parameters(True), key=lambda x: len(x.attributes))
+    @property
+    def unused_parameters(self):
+        """Parameters that has no attributes and which values not
+        used directly in function.
+        """
+        return [p for p in self.attributeless_parameters if not p.used_directly]
 
-    def top_parameters_with_scattered_types(self, n):
-        return heapq.nlargest(n, self.scattered_parameters(), key=lambda x: len(x.suggested_types))
+    def most_attributes_parameters(self, n):
+        return heapq.nlargest(n, self.project_parameters, key=lambda x: len(x.attributes))
 
-    def sample_parameters_with_unresolved_types(self, n):
-        # [p for p in Indexer.PARAMETERS_INDEX.values() if p.attributes and not p.suggested_types][:n]
-        result = []
-        for param in self.parameters(True):
-            if param.attributes and not param.suggested_types:
-                result.append(param)
-            if len(result) > n:
-                break
-        return result
+    def most_types_parameters(self, n):
+        return heapq.nlargest(n, self.scattered_type_parameters,
+                              key=lambda x: len(x.suggested_types))
 
-    def sample_parameters_not_used_anywhere(self, n):
-        result = []
-        for param in self.parameters(True):
-            if not param.attributes and not param.used_directly:
-                result.append(param)
-            if len(result) > n:
-                break
-        return result
+    def as_dict(self, with_samples=False, sample_size=20):
+        invisible = object()
 
-    def format(self):
+        def filter_invisible(obj):
+            if isinstance(obj, dict):
+                filtered = {}
+                for key, value in obj.items():
+                    if value is not invisible:
+                        filtered[key] = filter_invisible(value)
+                return filtered
+            elif isinstance(obj, list):
+                filtered = []
+                for item in obj:
+                    if item is not invisible:
+                        filtered.append(filter_invisible(item))
+                return filtered
+            return obj
+
+
+        def sample(items):
+            if not with_samples:
+                return invisible
+
+            items = list(map(str, items))
+            if len(items) < sample_size:
+                return items
+            return items[:sample_size]
+
+        def rate(items, population, sample_items=None, with_samples=with_samples):
+            d = {'total': len(items), 'rate': len(items) / len(population)}
+            if sample_items is None:
+                sample_items = items
+            d['sample'] = sample(sample_items)
+            return d
+
+        d = {
+            'indexed': {
+                'total': {
+                    'modules': len(self.modules),
+                    'classes': len(self.classes),
+                    'functions': len(self.functions),
+                    'parameters': len(self.parameters),
+                },
+                'in_project': {
+                    'modules': len(self.project_modules),
+                    'classes': len(self.project_classes),
+                    'functions': len(self.project_functions),
+                    'parameters': len(self.project_parameters),
+                }
+            },
+            'project_statistics': {
+                'parameters': {
+                    'accessed_attributes': {
+                        'max': max(len(p.attributes) for p in self.project_parameters),
+                        'top': sample(self.most_attributes_parameters(sample_size))
+                    },
+                    'attributeless': {
+                        'total': len(self.attributeless_parameters),
+                        'rate': len(self.attributeless_parameters) / len(self.project_parameters),
+                        'sample': sample(self.attributeless_parameters),
+                        'usages': {
+                            'argument': rate(
+                                items=[p for p in self.attributeless_parameters
+                                       if p.used_as_argument > 0],
+                                population=self.attributeless_parameters,
+                                with_samples=False
+                            ),
+                            'operand': rate(
+                                items=[p for p in self.attributeless_parameters
+                                       if p.used_as_operand > 0],
+                                population=self.attributeless_parameters,
+                                with_samples=False
+                            ),
+                            'returned': rate(
+                                items=[p for p in self.attributeless_parameters if p.returned > 0],
+                                population=self.attributeless_parameters,
+                                with_samples=False
+                            ),
+                            'unused': rate(
+                                items=self.unused_parameters,
+                                population=self.attributeless_parameters
+                            )
+                        }
+                    },
+                    'undefined_type': rate(
+                        items=self.undefined_type_parameters,
+                        population=self.project_parameters
+                    ),
+                    'exact_type': rate(
+                        items=self.exact_type_parameters,
+                        population=self.project_parameters
+                    ),
+                    'scattered_type': rate(
+                        items=self.scattered_type_parameters,
+                        population=self.project_parameters
+                    )
+                }
+            }
+        }
+
+        return filter_invisible(d)
+
+    def format_json(self, with_samples=False, sample_size=20):
+        return json.dumps(self.as_dict(with_samples, sample_size), indent=2)
+
+
+    def format_text(self):
         formatted = ''
         if self.show_total:
             formatted += '\nTotal indexed: {} classes with {} attributes, ' \
                          '{} functions with {} parameters'.format(
-                len(self.parameters()),
+                len(self.classes),
                 len(self.analyzer.indexes['CLASS_ATTRIBUTE_INDEX']),
-                len(self.functions()),
-                len(self.parameters()))
+                len(self.functions),
+                len(self.parameters))
 
             formatted += '\nIn project: {} classes, {} functions with {} parameters'.format(
-                len(self.parameters(True)),
-                len(self.functions(True)),
-                len(self.parameters(True)))
+                len(self.project_classes),
+                len(self.project_functions),
+                len(self.project_parameters))
 
         if self.show_prolific_params:
-            prolific_params = self.top_parameters_with_most_attributes(self.top_size)
+            prolific_params = self.most_attributes_parameters(self.top_size)
             formatted += self._format_list(
                 header='Most frequently accessed parameters (top {}):'.format(self.top_size),
                 items=prolific_params,
@@ -920,12 +1018,12 @@ class StatisticReport(object):
             )
 
         if self.show_param_types:
-            total_params = len(self.parameters(True))
-            attributeless_params = self.attributeless_params()
+            total_params = len(self.project_parameters)
+            attributeless_params = self.attributeless_parameters
             total_attributeless = len(attributeless_params)
-            total_undefined = len(self.undefined_parameters())
-            total_inferred = len(self.inferred_parameters())
-            total_scattered = len(self.scattered_parameters())
+            total_undefined = len(self.undefined_type_parameters)
+            total_inferred = len(self.exact_type_parameters)
+            total_scattered = len(self.scattered_type_parameters)
             formatted += textwrap.dedent("""
             Parameters statistic:
               {} ({:.2%}) parameters have no attributes (types cannot be inferred):
@@ -949,24 +1047,24 @@ class StatisticReport(object):
 
             formatted += self._format_list(
                 header='Parameters with scattered type (top {}):'.format(self.top_size),
-                items=self.top_parameters_with_scattered_types(self.top_size),
+                items=self.most_types_parameters(self.top_size),
                 prefix_func=lambda x: '{:3} types'.format(len(x.suggested_types))
             )
 
             formatted += self._format_list(
                 header='Parameters with accessed attributes, '
                        'but with no suggested classes (first {})'.format(self.top_size),
-                items=self.sample_parameters_with_unresolved_types(self.top_size)
+                items=self.undefined_type_parameters[:self.top_size]
             )
 
             formatted += self._format_list(
                 header='Parameters that have no attributes and not used directly '
                        'elsewhere (first {})'.format(self.top_size),
-                items=self.sample_parameters_not_used_anywhere(self.top_size)
+                items=self.unused_parameters[:self.top_size]
             )
 
         if self.show_random_inferred:
-            params = list(self._filter_name_prefix(self.inferred_parameters()))
+            params = list(self._filter_name_prefix(self.exact_type_parameters))
             quantity = min(self.top_size, len(params))
             formatted += self._format_list(
                 header='Parameters with definitively inferred types '
@@ -975,13 +1073,13 @@ class StatisticReport(object):
             )
 
         if self.dump_classes:
-            classes = self._filter_name_prefix(self.classes(True))
+            classes = self._filter_name_prefix(self.project_classes)
             formatted += self._format_list(header='Classes:', items=classes)
         if self.dump_functions:
-            functions = self._filter_name_prefix(self.functions(True))
+            functions = self._filter_name_prefix(self.project_functions)
             formatted += self._format_list(header='Functions:', items=functions)
         if self.dump_params:
-            parameters = self._filter_name_prefix(self.parameters(True))
+            parameters = self._filter_name_prefix(self.project_parameters)
             chunks = []
             for param in sorted(parameters, key=operator.attrgetter('qname')):
                 chunks.append(textwrap.dedent("""\
@@ -999,7 +1097,7 @@ class StatisticReport(object):
         return formatted
 
     def __str__(self):
-        return self.format()
+        return self.format_text()
 
     def __repr__(self):
         preferences = ', '.join('{}={}'.format(k, v) for k, v in vars(self).items())
