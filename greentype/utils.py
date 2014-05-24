@@ -3,6 +3,7 @@ from __future__ import unicode_literals, print_function
 import functools
 import os
 import contextlib
+import timeit
 import traceback
 import sys
 import time
@@ -101,30 +102,33 @@ def memoized(f):
     return wrapper
 
 
-def timed(func=None, header=None):
-    # alternative solution is custom context manager class with
-    # __call__() overridden
-
+def timed(msg=None, func=None, args=None, kwargs=None):
     class Timer(object):
         def __enter__(self):
-            self.start = time.clock()
+            self.start = timeit.default_timer()
             return self
 
         def __exit__(self, exc_type, exc_val, exc_tb):
-            elapsed = time.clock() - self.start
-            print('{}: {:.2f}s'.format(header or 'Total', elapsed))
+            elapsed = timeit.default_timer() - self.start
+            print('{}: {:.2f}s'.format(msg or 'Total', elapsed))
 
-    if header and func is None:
-        return functools.partial(timed, header=header)
+    if func is not None:
+        with Timer():
+            func(*(args or ()), **(kwargs or {}))
+    else:
+        return Timer()
 
+
+def timed_function(func=None, msg=None):
+    if func is None and msg:
+        return functools.partial(timed_function, msg=msg)
     if func:
-        @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            with Timer():
-                func(*args, **kwargs)
+            with timed(msg):
+                return func(*args, **kwargs)
 
         return wrapper
-    return Timer()
+    raise ValueError('Either function or header should be specified')
 
 
 def camel_to_snake(s):
