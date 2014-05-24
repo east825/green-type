@@ -335,8 +335,6 @@ class GreenTypeAnalyzer(object):
                         module_loaded = self.index_module(name=imp.imported_name)
                         if module_loaded:
                             top_level_name = utils.qname_drop(name, imp.local_name)
-                            # TODO: write regression test for
-                            # df = self.resolve_name(qname, top_level_name, type)
                             df = self.resolve_name(top_level_name, module_loaded, type)
                             if df:
                                 return df

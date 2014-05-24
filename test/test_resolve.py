@@ -50,6 +50,10 @@ def test_import_chain(analyzer):
     with analyzer.roots('local/import_chain'):
         analyzer.assert_resolved('main.py', 'alias.A.Inner', 'package.module.MyClass.Inner')
 
+def test_import_chain2(analyzer):
+    with analyzer.roots('local/import_chain2'):
+        analyzer.assert_resolved('main.py', 'module.A', 'package.sibling.A')
+
 
 def test_path_to_module(analyzer):
     with analyzer.roots('roots',
