@@ -100,8 +100,14 @@ class Config(dict):
     __defaults = {
         'FOLLOW_IMPORTS': True,
         'BUILTINS': sys.builtin_module_names + ('_socket', 'datetime'),
+
         'TARGET_NAME': None,
         'TARGET_PATH': None,
+
+        'PROJECT_ROOT': None,
+        'PROJECT_NAME': None,
+        'SOURCE_ROOTS': None,
+
         'VERBOSE': False,
         'ANALYZE_BUILTINS': True
     }
@@ -153,12 +159,14 @@ class GreenTypeAnalyzer(object):
             raise ValueError('Unrecognized target {!r}. '
                              'Should be either file or directory.'.format(target_path))
         self.config['PROJECT_ROOT'] = project_root
+        self.config['PROJECT_NAME'] = os.path.basename(target_path)
         # if not source_roots:
         # source_roots = [project_root]
         # else:
         # source_roots = list(source_roots)
         # source_roots.insert(0, project_root)
         self.config['SOURCE_ROOTS'] = [project_root]
+
 
     @property
     def statistics_report(self):
@@ -167,6 +175,10 @@ class GreenTypeAnalyzer(object):
     @property
     def target_path(self):
         return self.config['TARGET_PATH']
+
+    @property
+    def project_name(self):
+        return self.config['PROJECT_NAME']
 
     @property
     def project_root(self):
@@ -952,7 +964,7 @@ class StatisticsReport(object):
             return d
 
         d = {
-            'project_name': os.path.basename(self.analyzer.target_path),
+            'project_name': self.analyzer.project_name,
             'project_root': self.analyzer.project_root,
             'indexed': {
                 'total': {
