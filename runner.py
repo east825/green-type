@@ -105,7 +105,8 @@ def main():
                     report_path = os.path.join(REPORTS_DIR, project_name + '.json')
                     if not args.force and os.path.exists(report_path):
                         print('Using existing JSON report for {}'.format(project_name))
-                        with open(report_path) as f:
+                        # json handles encoding by itself
+                        with open(report_path, 'rb') as f:
                             report = json.load(f, encoding='utf-8')
                     else:
                         statistics = analyze_project(project_path, args)
@@ -113,7 +114,7 @@ def main():
                         if report['indexed']['in_project']['parameters'] == 0:
                             print('Nothing to analyze in {}. Skipping.'.format(project_name))
                             continue
-                        with open(report_path, 'w') as f:
+                        with open(report_path, 'wb') as f:
                             json.dump(report, f, encoding='utf-8', indent=2)
 
                     project_reports.append(report)
@@ -132,11 +133,12 @@ def main():
             ]
 
             for title, path in metrics:
-                values = {}
+                values, value_sources = [], {}
                 keys = path.split('.')
-                for stat in project_reports:
-                    value = functools.reduce(operator.getitem, keys, stat)
-                    values[value] = stat['project_root']
+                for report in project_reports:
+                    value = functools.reduce(operator.getitem, keys, report)
+                    values.append(value)
+                    value_sources[value] = report['project_root']
 
                 mean = sum(values) / len(values)
                 variance = sum((x - mean) ** 2 for x in values) / len(values)
@@ -150,8 +152,8 @@ def main():
                   max={max_value} ({max_project})
                   min={min_value} ({min_project})
                     """.format(title=title, mean=mean, variance=variance,
-                               max_value=max_value, max_project=values[max_value],
-                               min_value=min_value, min_project=values[min_value])))
+                               max_value=max_value, max_project=value_sources[max_value],
+                               min_value=min_value, min_project=value_sources[min_value])))
         else:
             statistics = analyze_project(target_path, args)
             # TODO: analyze newly found functions as well
