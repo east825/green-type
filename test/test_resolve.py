@@ -71,6 +71,11 @@ def test_path_to_module(analyzer):
         m2 = analyzer.index_module('a/b/package/dir/module.py')
         assert m2 is None
 
+def test_same_name_bases_skipped(analyzer):
+    analyzer.index_module('same_name_bases.py')
+    cls = analyzer.indexes['CLASS_INDEX']['same_name_bases.A']
+    assert analyzer._resolve_bases(cls) == set()
+
 
 def test_resolve_stdlib(analyzer):
     analyzer.index_builtins()

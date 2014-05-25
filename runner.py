@@ -8,6 +8,7 @@ import argparse
 import textwrap
 import traceback
 import operator
+import sys
 
 from greentype import core
 from greentype import utils
@@ -48,8 +49,8 @@ def analyze_project(target_path, args):
                 if not utils.is_python_source_module(abs_path):
                     continue
                 analyzer.index_module(abs_path)
-
-    analyzer.infer_parameter_types()
+    with utils.timed('Inferred types for parameters'):
+        analyzer.infer_parameter_types()
     return analyzer.statistics_report
 
 
@@ -94,6 +95,8 @@ def main():
 
     if args.VERBOSE:
         logging.getLogger().setLevel(logging.DEBUG)
+
+    LOG.info('Python path: %s', sys.path)
 
     try:
         target_path = os.path.abspath(os.path.expanduser(args.path))

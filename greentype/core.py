@@ -424,7 +424,10 @@ class GreenTypeAnalyzer(object):
         bases = set()
 
         for name in class_def.bases:
-            # fully qualified name or built-in
+            if name == class_def.name:
+                LOG.warning("Class %s uses base with the same name. Not supported "
+                            "until flow-insensitive analysis is done.", class_def.qname)
+                continue
             base_def = self.resolve_name(name, class_def.module, 'class')
             if base_def:
                 bases.add(base_def)
