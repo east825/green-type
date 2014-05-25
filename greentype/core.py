@@ -40,11 +40,12 @@ class Index(defaultdict):
 
 
 class StatisticUnit(object):
-    __slots__ = ('_min', '_max', '_items', '_counter')
+    __slots__ = ('_min', '_max', '_items', '_counter', '_data')
 
     def __init__(self):
         self._min = None
         self._max = None
+        self._data = None
         self._items = None
         self._counter = None
 
@@ -63,17 +64,21 @@ class StatisticUnit(object):
             self._counter = 0
         self._counter += value
 
-    def set_max(self, value):
+    def set_max(self, value, data=None):
         if self._max is None:
             self._max = value
         else:
             self._max = max(self._max, value)
+        if self._max == value:
+            self._data = data
 
-    def set_min(self, value):
+    def set_min(self, value, data=None):
         if self._min is None:
             self._min = value
         else:
             self._min = min(self._min, value)
+        if self._min == value:
+            self._data = data
 
     def __iadd__(self, other):
         self.inc(other)
@@ -166,6 +171,7 @@ class GreenTypeAnalyzer(object):
         # source_roots = list(source_roots)
         # source_roots.insert(0, project_root)
         self.config['SOURCE_ROOTS'] = [project_root]
+        self.statistics = defaultdict(StatisticUnit)
 
 
     @property
@@ -462,6 +468,11 @@ class GreenTypeAnalyzer(object):
             candidate = candidates.pop()
             checked.add(candidate)
             bases = self._resolve_bases(candidate)
+
+            # register number of base classes for statistics
+            num_bases = len(bases)
+            self.statistics['max_bases'].set_max(num_bases, candidate.qname)
+
             all_attrs = unite(b.attributes for b in bases) | candidate.attributes
             if accessed_attrs <= all_attrs:
                 suitable_classes.add(candidate)
@@ -1028,7 +1039,9 @@ class StatisticsReport(object):
                         items=self.scattered_type_parameters,
                         population=self.project_parameters
                     )
-                }
+                },
+                'additional': {name: unit.as_dict() for name, unit in
+                               self.analyzer.statistics.items()}
             }
         }
 

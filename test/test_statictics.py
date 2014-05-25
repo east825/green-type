@@ -82,7 +82,13 @@ def test_dict_report_format(analyzer):
                 "scattered_type": {"rate": 0, "total": 0},
                 "exact_type": {"rate": 1 / 5, "total": 1},
                 "undefined_type": {"rate": 0, "total": 0}
-            }
+            },
+            "additional": {
+                "max_bases": {
+                    "max": 1, # object is unresolved
+                    "data": "report.SubClass"
+                }
+            },
         },
         "project_root": analyzer.project_root,
         "project_name": "report.py"

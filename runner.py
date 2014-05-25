@@ -1,4 +1,4 @@
-from __future__ import unicode_literals, print_function
+from __future__ import unicode_literals, print_function, division
 import functools
 import json
 
@@ -129,6 +129,7 @@ def main():
                 ('Undefined type parameters', 'project_statistics.parameters.undefined_type.rate'),
                 ('Exact type parameters', 'project_statistics.parameters.exact_type.rate'),
                 ('Scattered type parameters', 'project_statistics.parameters.scattered_type.rate'),
+                ('Maximum number of base classes', 'project_statistics.additional.max_bases.max'),
             ]
 
             for title, path in metrics:
