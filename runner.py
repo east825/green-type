@@ -111,6 +111,9 @@ def main():
                     else:
                         statistics = analyze_project(project_path, args)
                         report = statistics.as_dict(with_samples=False)
+                        if report['indexed']['in_project']['parameters'] == 0:
+                            print('Nothing to analyze in {}. Skipping.'.format(project_name))
+                            continue
                         with open(report_path, 'w') as f:
                             json.dump(report, f, encoding='utf-8', indent=2)
 

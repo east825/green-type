@@ -32,9 +32,12 @@ _excluded_projects = frozenset([
     # doesn't have enough Python modules do analyze
     'mattwilliamson/arduino-sms-alarm',
     'logsol/Github-Auto-Deploy.git',
+    'jokkedk/webgrind',
+    'square/SocketRocket',
     # broken projects
     'Eichhoernchen/SiriServer',
     'Aaln/whit',
+    'chen3feng/typhoon-blade'
 ])
 
 
