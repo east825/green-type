@@ -1,15 +1,41 @@
 from __future__ import print_function
-import json
 import os
 import random
 import subprocess
 import argparse
-
-import requests
 import sys
 
+import requests
+
+
 # exclude some common libraries from samples
-_excludes = ['django', 'flask', 'celery', 'web2py', 'cython', 'web']
+_excluded_words = frozenset([
+    'django',
+    'flask',
+    'webpy',
+    'celery',
+    'web2py',
+    'cython',
+    'sublime',
+])
+
+_excluded_projects = frozenset([
+    # mostly pictures
+    'nvkelso/natural-earth-vector',
+    # mostly text
+    'CamDavidsonPilon/Probabilistic-Programming-and-Bayesian-Methods-for-Hackers',
+    'karan/Projects',
+    'python-git/python',
+    'mitsuhiko/rstblog',
+    'redecentralize/alternative-internet',
+    'kennethreitz/python-guide',
+    # doesn't have enough Python modules do analyze
+    'mattwilliamson/arduino-sms-alarm',
+    'logsol/Github-Auto-Deploy.git',
+    # broken projects
+    'Eichhoernchen/SiriServer',
+    'Aaln/whit',
+])
 
 
 def main():
@@ -26,8 +52,8 @@ def main():
     while len(projects) < args.number:
         r = requests.get('https://api.github.com/search/repositories',
                          params={
-                             'q': 'language:python stars:10..200',
-                             'size': '<=50000',  # no larger than 50 MB
+                             # 'q': 'language:python stars:10..200',
+                             'q': 'language:python size:<=30000',
                              'per_page': 100,
                              'page': page
                          },
@@ -38,10 +64,18 @@ def main():
         items = list(r.json()['items'])
         random.shuffle(items)
         for item in items:
-            desc = item['description'].lower()
-            if any(word in desc for word in _excludes) \
-                    or os.path.exists(os.path.join(args.dest, item['name'])):
+
+            if item['full_name'] in _excluded_projects:
                 continue
+
+            desc = item['description'].lower()
+            name = item['name'].lower()
+            if any(word in desc or word in name for word in _excluded_words):
+                continue
+
+            if os.path.exists(os.path.join(args.dest, item['name'])):
+                continue
+
             projects[item['full_name']] = item['clone_url']
             if len(projects) >= args.number:
                 break

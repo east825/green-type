@@ -134,7 +134,7 @@ class Config(dict):
 
 
 class GreenTypeAnalyzer(object):
-    def __init__(self, project_root, target_path=None):
+    def __init__(self, target_path):
         self.indexes = {
             'MODULE_INDEX': Index(None),
             'CLASS_INDEX': Index(None),
@@ -144,22 +144,29 @@ class GreenTypeAnalyzer(object):
         }
 
         self.config = Config()
+        self.config['TARGET_PATH'] = target_path
+        if os.path.isfile(target_path):
+            project_root = os.path.dirname(target_path)
+        elif os.path.isdir(target_path):
+            project_root = target_path
+        else:
+            raise ValueError('Unrecognized target {!r}. '
+                             'Should be either file or directory.'.format(target_path))
         self.config['PROJECT_ROOT'] = project_root
         # if not source_roots:
         # source_roots = [project_root]
         # else:
         # source_roots = list(source_roots)
         # source_roots.insert(0, project_root)
-        if not target_path:
-            target_path = project_root
-
-        self.config['TARGET_PATH'] = target_path
-
         self.config['SOURCE_ROOTS'] = [project_root]
 
     @property
     def statistics_report(self):
         return StatisticsReport(self)
+
+    @property
+    def target_path(self):
+        return self.config['TARGET_PATH']
 
     @property
     def project_root(self):
@@ -825,6 +832,7 @@ class SourceModuleIndexer(ast.NodeVisitor):
                     param_name = arg.id
                 else:
                     LOG.warning('Function %s uses argument patterns. Skipped.', func_name)
+                    continue
             else:
                 param_name = arg.arg
             attributes = SimpleAttributesCollector(param_name).collect(node.body)
@@ -933,13 +941,19 @@ class StatisticsReport(object):
             return items[:sample_size]
 
         def rate(items, population, sample_items=None, with_samples=with_samples):
-            d = {'total': len(items), 'rate': len(items) / len(population)}
-            if sample_items is None:
-                sample_items = items
-            d['sample'] = sample(sample_items)
+            d = {
+                'total': len(items),
+                'rate': len(items) / len(population) if items else 0
+            }
+            if with_samples:
+                if sample_items is None:
+                    sample_items = items
+                d['sample'] = sample(sample_items)
             return d
 
         d = {
+            'project_name': os.path.basename(self.analyzer.target_path),
+            'project_root': self.analyzer.project_root,
             'indexed': {
                 'total': {
                     'modules': len(self.modules),
@@ -957,12 +971,14 @@ class StatisticsReport(object):
             'project_statistics': {
                 'parameters': {
                     'accessed_attributes': {
-                        'max': max(len(p.attributes) for p in self.project_parameters),
+                        'max': max(len(p.attributes) for p in self.project_parameters) \
+                            if self.project_parameters else 0,
                         'top': sample(self.most_attributes_parameters(sample_size))
                     },
                     'attributeless': {
                         'total': len(self.attributeless_parameters),
-                        'rate': len(self.attributeless_parameters) / len(self.project_parameters),
+                        'rate': len(self.attributeless_parameters) / len(self.project_parameters) \
+                            if self.project_parameters else 0,
                         'sample': sample(self.attributeless_parameters),
                         'usages': {
                             'argument': rate(

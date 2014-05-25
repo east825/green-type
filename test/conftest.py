@@ -13,8 +13,8 @@ TEST_DATA_ROOT = os.path.join(TEST_ROOT, 'test_data')
 
 class TestAnalyzer(core.GreenTypeAnalyzer):
 
-    def __init__(self, project_root):
-        super(TestAnalyzer, self).__init__(project_root)
+    def __init__(self, target_path):
+        super(TestAnalyzer, self).__init__(target_path)
         self.config['FOLLOW_IMPORTS'] = False
         self._inferred_types = False
 

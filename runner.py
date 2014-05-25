@@ -1,16 +1,56 @@
 from __future__ import unicode_literals, print_function
+import functools
+import json
 
 import os
 import logging
 import argparse
+import textwrap
 import traceback
+import operator
 
 from greentype import core
 from greentype import utils
 
+PROJECT_ROOT = os.path.dirname(__file__)
+REPORTS_DIR = os.path.join(PROJECT_ROOT, 'reports')
 
 logging.basicConfig(level=logging.CRITICAL)
 LOG = logging.getLogger(__name__)
+
+
+def analyze_project(target_path, args):
+    analyzer = core.GreenTypeAnalyzer(target_path=target_path)
+    analyzer.config.update_from_object(args)
+
+    if analyzer.config['ANALYZE_BUILTINS']:
+        analyzer.index_builtins()
+
+    print('Analyzing user modules starting from {!r}'.format(target_path))
+    if os.path.isfile(target_path):
+        if not utils.is_python_source_module(target_path):
+            raise ValueError('Not a valid Python module {!r} '
+                             '(should end with .py).'.format(target_path))
+        analyzer.index_module(path=target_path)
+    elif os.path.isdir(target_path):
+        for dirpath, dirnames, filenames in os.walk(target_path):
+            for name in dirnames:
+                abs_path = os.path.abspath(os.path.join(dirpath, name))
+                if not os.path.exists(os.path.join(abs_path, '__init__.py')):
+                    # ignore namespace packages for now
+                    LOG.debug('Not a package: %r. Skipping.', abs_path)
+                    dirnames.remove(name)
+                elif name.startswith('.'):
+                    LOG.debug('Hidden directory: %r. Skipping.', abs_path)
+                    dirnames.remove(name)
+            for name in filenames:
+                abs_path = os.path.abspath(os.path.join(dirpath, name))
+                if not utils.is_python_source_module(abs_path):
+                    continue
+                analyzer.index_module(abs_path)
+
+    analyzer.infer_parameter_types()
+    return analyzer.statistics_report
 
 
 def main():
@@ -41,6 +81,12 @@ def main():
     parser.add_argument('--json', action='store_true',
                         help='Dump analysis results in JSON.')
 
+    parser.add_argument('--batch', action='store_true',
+                        help='Run analysis on all projects in directory.')
+
+    parser.add_argument('--force', action='store_true',
+                        help='Do not use existing statistics report.')
+
     parser.add_argument('path',
                         help='Path to single Python module or directory.')
 
@@ -49,58 +95,68 @@ def main():
     if args.VERBOSE:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    def normalize_path(path):
-        return os.path.abspath(os.path.expanduser(path))
-
     try:
-        target_path = normalize_path(args.path)
+        target_path = os.path.abspath(os.path.expanduser(args.path))
+        if args.batch:
+            print('Running analysis in batch mode. Scanning directory {!r}.'.format(target_path))
+            project_reports = []
+            for project_name in os.listdir(target_path):
+                project_path = os.path.join(target_path, project_name)
+                if os.path.isdir(project_path):
+                    report_path = os.path.join(REPORTS_DIR, project_name + '.json')
+                    if not args.force and os.path.exists(report_path):
+                        print('Using existing JSON report for {}'.format(project_name))
+                        with open(report_path) as f:
+                            report = json.load(f, encoding='utf-8')
+                    else:
+                        statistics = analyze_project(project_path, args)
+                        report = statistics.as_dict(with_samples=False)
+                        with open(report_path, 'w') as f:
+                            json.dump(report, f, encoding='utf-8', indent=2)
 
-        if os.path.isfile(target_path):
-            project_root = os.path.dirname(target_path)
-        elif os.path.isdir(target_path):
-            project_root = target_path
+                    project_reports.append(report)
+
+            if not project_reports:
+                print('No projects found.')
+                return
+            print('Total {:d} projects'.format(len(project_reports)))
+
+            metrics = [
+                ('Attributeless parameters', 'project_statistics.parameters.attributeless.rate'),
+                ('Undefined type parameters', 'project_statistics.parameters.undefined_type.rate'),
+                ('Exact type parameters', 'project_statistics.parameters.exact_type.rate'),
+                ('Scattered type parameters', 'project_statistics.parameters.scattered_type.rate'),
+            ]
+
+            for title, path in metrics:
+                values = {}
+                keys = path.split('.')
+                for stat in project_reports:
+                    value = functools.reduce(operator.getitem, keys, stat)
+                    values[value] = stat['project_root']
+
+                mean = sum(values) / len(values)
+                variance = sum((x - mean) ** 2 for x in values) / len(values)
+                min_value = min(values)
+                max_value = max(values)
+
+                print(textwrap.dedent("""\
+                {title}:
+                  mean={mean}
+                  variance={variance}
+                  max={max_value} ({max_project})
+                  min={min_value} ({min_project})
+                    """.format(title=title, mean=mean, variance=variance,
+                               max_value=max_value, max_project=values[max_value],
+                               min_value=min_value, min_project=values[min_value])))
         else:
-            raise ValueError('Unrecognized target {!r}. '
-                             'Should be either file or directory.'.format(target_path))
-
-        analyzer = core.GreenTypeAnalyzer(project_root=project_root, target_path=target_path)
-        analyzer.config.update_from_object(args)
-
-        if analyzer.config['ANALYZE_BUILTINS']:
-            analyzer.index_builtins()
-
-        print('Analyzing user modules starting from {!r}'.format(args.path))
-        if os.path.isfile(args.path):
-            if not utils.is_python_source_module(args.path):
-                raise ValueError('Not a valid Python module {!r} '
-                                 '(should end with .py).'.format(args.path))
-            analyzer.index_module(path=args.path)
-        elif os.path.isdir(args.path):
-            for dirpath, dirnames, filenames in os.walk(args.path):
-                for name in dirnames:
-                    abs_path = os.path.abspath(os.path.join(dirpath, name))
-                    if not os.path.exists(os.path.join(abs_path, '__init__.py')):
-                        # ignore namespace packages for now
-                        LOG.debug('Not a package: %r. Skipping.', abs_path)
-                        dirnames.remove(name)
-                    elif name.startswith('.'):
-                        LOG.debug('Hidden directory: %r. Skipping.', abs_path)
-                        dirnames.remove(name)
-                for name in filenames:
-                    abs_path = os.path.abspath(os.path.join(dirpath, name))
-                    if not utils.is_python_source_module(abs_path):
-                        continue
-                    analyzer.index_module(abs_path)
-
-        analyzer.infer_parameter_types()
-
-        # TODO: analyze newly found functions as well
-        statistics = analyzer.statistics_report
-        statistics.dump_params = args.dump_params
-        if args.json:
-            print(statistics.format_json(with_samples=True))
-        else:
-            print(statistics.format_text())
+            statistics = analyze_project(target_path, args)
+            # TODO: analyze newly found functions as well
+            statistics.dump_params = args.dump_params
+            if args.json:
+                print(statistics.format_json(with_samples=True))
+            else:
+                print(statistics.format_text())
 
     except Exception:
         traceback.print_exc()
