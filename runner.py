@@ -35,13 +35,9 @@ def analyze_project(target_path, args):
         analyzer.index_module(path=target_path)
     elif os.path.isdir(target_path):
         for dirpath, dirnames, filenames in os.walk(target_path):
-            for name in dirnames:
+            for name in dirnames[:]:
                 abs_path = os.path.abspath(os.path.join(dirpath, name))
-                if not os.path.exists(os.path.join(abs_path, '__init__.py')):
-                    # ignore namespace packages for now
-                    LOG.debug('Not a package: %r. Skipping.', abs_path)
-                    dirnames.remove(name)
-                elif name.startswith('.'):
+                if name.startswith('.'):
                     LOG.debug('Hidden directory: %r. Skipping.', abs_path)
                     dirnames.remove(name)
             for name in filenames:
