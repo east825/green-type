@@ -270,20 +270,10 @@ class GreenTypeAnalyzer(object):
         for src_root in roots:
             if path.startswith(src_root):
                 # check that on all way up to module correct packages with __init__ exist
-
                 in_proper_package = True
-                # package_path = os.path.dirname(path)
-                # while package_path != src_root:
-                # if not os.path.exists(os.path.join(package_path, '__init__.py')):
-                # in_proper_package = False
-                # break
-                # package_path = os.path.dirname(package_path)
-
                 relative = os.path.relpath(path, src_root)
-                package_path = src_root
-                for comp in relative.split(os.path.sep)[:-1]:
-                    package_path = os.path.join(package_path, comp)
-                    if not os.path.exists(os.path.join(package_path, '__init__.py')):
+                for dir in utils.parent_directories(path, src_root):
+                    if not os.path.exists(os.path.join(dir, '__init__.py')):
                         in_proper_package = False
                         break
 
