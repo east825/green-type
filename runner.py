@@ -12,6 +12,7 @@ import sys
 
 from greentype import core
 from greentype import utils
+from greentype.compat import open
 
 PROJECT_ROOT = os.path.dirname(__file__)
 REPORTS_DIR = os.path.join(PROJECT_ROOT, 'reports')

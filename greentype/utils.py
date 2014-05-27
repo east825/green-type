@@ -5,19 +5,14 @@ import os
 import contextlib
 import timeit
 import traceback
-import sys
-import time
 
-PY2 = sys.version_info.major == 2
-
-if PY2:
-    from collections import Iterable
-else:
-    from collections.abc import Iterable
+from .compat import collections_abc, PY2
 
 
 def is_collection(x):
-    return isinstance(x, Iterable) and not isinstance(x, (str, bytes))
+    if not isinstance(x, collections_abc.Iterable):
+        return False
+    return not isinstance(x, basestring) if PY2 else not isinstance(x, (str, bytes))
 
 
 def partition_any(s, separators, from_end=False):
@@ -164,12 +159,3 @@ def suppress_exceptions():
         yield
     except Exception:
         traceback.print_exc()
-
-
-def indent(s, indent):
-    import textwrap
-
-    if hasattr(textwrap, 'indent'):
-        return textwrap.indent(s, indent)
-    lines = s.splitlines(True)
-    return ''.join(indent + line for line in lines)

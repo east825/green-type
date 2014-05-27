@@ -1,7 +1,7 @@
 TEST_DATA_DIR = 'inference'
 
 from greentype.utils import PY2
-from greentype.core import BUILTINS
+from greentype.compat import BUILTINS_NAME
 
 
 def index_builtins_and_module(analyzer, module_path):
@@ -21,29 +21,29 @@ def test_builtins(analyzer):
     analyzer.index_module('builtins.py')
 
     analyzer.assert_inferred('builtins.check_collections.x', {
-        BUILTINS + '.dict',
-        BUILTINS + '.set'
+        BUILTINS_NAME + '.dict',
+        BUILTINS_NAME + '.set'
     })
-    analyzer.assert_inferred('builtins.check_collections.y', {BUILTINS + '.list',})
+    analyzer.assert_inferred('builtins.check_collections.y', {BUILTINS_NAME + '.list',})
 
     if PY2:
         analyzer.assert_inferred('builtins.check_strings.x', {
-            BUILTINS + '.unicode',
-            BUILTINS + '.str',
-            BUILTINS + '.bytearray'
+            BUILTINS_NAME + '.unicode',
+            BUILTINS_NAME + '.str',
+            BUILTINS_NAME + '.bytearray'
         })
     else:
         analyzer.assert_inferred('builtins.check_strings.x', {
-            BUILTINS + '.str',
-            BUILTINS + '.bytes',
-            BUILTINS + '.bytearray'
+            BUILTINS_NAME + '.str',
+            BUILTINS_NAME + '.bytes',
+            BUILTINS_NAME + '.bytearray'
         })
 
     if PY2:
         analyzer.assert_inferred('builtins.check_strings.y', {
-            BUILTINS + '.unicode',
-            BUILTINS + '.str'
+            BUILTINS_NAME + '.unicode',
+            BUILTINS_NAME + '.str'
         })
     else:
-        analyzer.assert_inferred('builtins.check_strings.y', {BUILTINS + '.str'})
+        analyzer.assert_inferred('builtins.check_strings.y', {BUILTINS_NAME + '.str'})
 

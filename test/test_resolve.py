@@ -1,5 +1,6 @@
 from conftest import *
 
+from greentype.compat import BUILTINS_NAME
 TEST_DATA_DIR = 'resolve'
 
 def test_no_import(analyzer):
@@ -81,9 +82,9 @@ def test_resolve_stdlib(analyzer):
     analyzer.index_builtins()
     analyzer.assert_resolved('stdlib.py', 'datetime', 'datetime.datetime')
     analyzer.assert_resolved('stdlib.py', 'ArgumentParser', 'argparse.ArgumentParser')
-    analyzer.assert_resolved('stdlib.py', 'RuntimeError', core.BUILTINS + '.RuntimeError')
+    analyzer.assert_resolved('stdlib.py', 'RuntimeError', BUILTINS_NAME + '.RuntimeError')
     analyzer.assert_resolved('stdlib.py', 'collections.defaultdict', '_collections.defaultdict')
-    analyzer.assert_resolved('stdlib.py', 'dict', core.BUILTINS + '.dict')
+    analyzer.assert_resolved('stdlib.py', 'dict', BUILTINS_NAME + '.dict')
 
 
 

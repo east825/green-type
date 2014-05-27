@@ -15,10 +15,9 @@ import textwrap
 
 from . import ast_utils
 from . import utils
-from .utils import PY2, memoized
+from .utils import memoized
+from .compat import PY2, BUILTINS_NAME, indent
 
-
-BUILTINS = '__builtin__' if PY2 else 'builtins'
 
 LOG = logging.getLogger(__name__)
 
@@ -104,7 +103,11 @@ class Config(dict):
 
     __defaults = {
         'FOLLOW_IMPORTS': True,
-        'BUILTINS': sys.builtin_module_names + ('_socket', 'datetime'),
+        'BUILTINS': sys.builtin_module_names + ((
+            '_socket',
+            'datetime',
+            '_collections'
+        ) if PY2 else ()),
 
         'TARGET_NAME': None,
         'TARGET_PATH': None,
@@ -346,7 +349,7 @@ class GreenTypeAnalyzer(object):
                 return index[qname]
 
         # already properly qualified name or built-in
-        df = check_loaded(name) or check_loaded(BUILTINS + '.' + name)
+        df = check_loaded(name) or check_loaded(BUILTINS_NAME + '.' + name)
         if df:
             return df
 
@@ -1163,27 +1166,27 @@ class StatisticsReport(object):
         preferences = ', '.join('{}={}'.format(k, v) for k, v in vars(self).items())
         return 'Statistic({})'.format(preferences)
 
-    def _format_list(self, items, header=None, prefix_func=None, indent='  '):
+    def _format_list(self, items, header=None, prefix_func=None, indentation='  '):
         formatted = '\n'
         if header is not None:
             formatted += '{}\n'.format(header)
         if not items:
-            formatted += indent + 'none'
+            formatted += indentation + 'none'
         else:
             blocks = []
             for item in items:
                 item_text = str(item)
                 if prefix_func is not None:
-                    prefix = '{}{} : '.format(indent, prefix_func(item))
+                    prefix = '{}{} : '.format(indentation, prefix_func(item))
                     lines = item_text.splitlines()
                     first_line, remaining_lines = lines[0], lines[1:]
                     block = '{}{}'.format(prefix, first_line)
                     if remaining_lines:
-                        indented_tail = utils.indent('\n'.join(remaining_lines), ' ' * len(prefix))
+                        indented_tail = indent('\n'.join(remaining_lines), ' ' * len(prefix))
                         blocks.append('{}\n{}'.format(block, indented_tail))
                     else:
                         blocks.append(block)
                 else:
-                    blocks.append(utils.indent(item_text, indent))
+                    blocks.append(indent(item_text, indentation))
             formatted += '\n'.join(blocks)
         return formatted + '\n'
