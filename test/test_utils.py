@@ -1,3 +1,4 @@
+import os
 import platform
 import time
 
@@ -75,19 +76,37 @@ def test_timed(capsys):
     utils.timed('msg #5', time.sleep, (0.1,))
     assert capsys.readouterr()[0] == 'msg #5: 0.10s\n'
 
-def test_parent_directories():
-    if platform.system() == 'Linux':
-        path = '/foo/bar/baz'
-        assert list(utils.parent_directories(path)) == ['/foo/bar', '/foo', '/']
-        # such structure actually doesn't exists
-        assert list(utils.parent_directories(path, strict=False)) == \
-               ['/foo/bar', '/foo', '/']
-        assert list(utils.parent_directories(path, stop=path)) == []
-        assert list(utils.parent_directories(path, '/foo/', True)) == ['/foo/bar']
-        # assert list(utils.parent_directories(path, '/foo/', False)) == ['/foo/bar/baz', '/foo/bar']
-        assert list(utils.parent_directories('/', strict=True)) == []
-        assert list(utils.parent_directories('/', strict=False)) == ['/']
+def test_parent_directories(tmpdir):
+    def parents(start, stop, strict):
+        return list(utils.parent_directories(start, stop, strict))
 
+    # root corner-cases
+    if platform.system() == 'Linux':
+        assert parents('/', None, False) == ['/']
+        assert parents('/', None, True) == []
+
+        assert parents('/', '/', False) == []
+        assert parents('/', '/', True) == []
+
+
+    root_path = tmpdir.strpath
+    file = tmpdir.ensure('foo/bar/baz/file.txt')
+    assert file.check()
+
+    foo_path = tmpdir.join('foo').strpath
+    bar_path = tmpdir.join('foo/bar').strpath
+    baz_path = tmpdir.join('foo/bar/baz').strpath
+    file_path = file.strpath
+
+    # strict parameter doesn't matter when start is a file
+    assert parents(file_path, root_path, False) == [baz_path, bar_path, foo_path]
+    assert parents(file_path, root_path, True) == [baz_path, bar_path, foo_path]
+
+    # but does when it's a directory
+    assert parents(baz_path, root_path, False) == [baz_path, bar_path, foo_path]
+    assert parents(baz_path, root_path, True) == [bar_path, foo_path]
+
+    # a couple of tests outside of temp dir
     assert list(utils.parent_directories(TEST_DATA_ROOT, TEST_ROOT, False)) == [TEST_DATA_ROOT]
     assert list(utils.parent_directories(TEST_DATA_ROOT, TEST_ROOT, True)) == []
 
