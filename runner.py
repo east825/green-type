@@ -98,6 +98,10 @@ def main():
         target_path = os.path.abspath(os.path.expanduser(args.path))
         if args.batch:
             print('Running analysis in batch mode. Scanning directory {!r}.'.format(target_path))
+            LOG.info('Reports directory does not exists yet. Creating one at %r.', REPORTS_DIR)
+            if not os.path.exists(REPORTS_DIR):
+                os.makedirs(REPORTS_DIR)
+
             project_reports = []
             for project_name in os.listdir(target_path):
                 project_path = os.path.join(target_path, project_name)
