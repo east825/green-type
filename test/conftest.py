@@ -12,7 +12,6 @@ TEST_DATA_ROOT = os.path.join(TEST_ROOT, 'test_data')
 
 
 class TestAnalyzer(core.GreenTypeAnalyzer):
-
     def __init__(self, target_path):
         super(TestAnalyzer, self).__init__(target_path)
         self.config['FOLLOW_IMPORTS'] = False
@@ -24,6 +23,11 @@ class TestAnalyzer(core.GreenTypeAnalyzer):
         resolved = self.resolve_name(local_name, module)
         assert resolved is not None
         assert resolved.qname == real_name
+
+    def invalidate_indexes(self):
+        super(TestAnalyzer, self).invalidate_indexes()
+        self._inferred_types = False
+
 
     def assert_inferred(self, param_name, class_names):
         if not self._inferred_types:
@@ -49,13 +53,17 @@ class TestAnalyzer(core.GreenTypeAnalyzer):
             self.config['SOURCE_ROOTS'] = old_roots
 
 
-@pytest.fixture()
-def analyzer(request):
+@pytest.fixture(autouse=True)
+def in_test_data_dir(request):
+    old_cwd = os.getcwd()
     test_data_dir = getattr(request.module, 'TEST_DATA_DIR', None)
     if test_data_dir:
         os.chdir(os.path.join(TEST_DATA_ROOT, test_data_dir))
-    else:
-        os.chdir(TEST_DATA_ROOT)
+        request.addfinalizer(lambda: os.chdir(old_cwd))
+
+
+@pytest.fixture()
+def analyzer():
     return TestAnalyzer(os.getcwd())
 
 

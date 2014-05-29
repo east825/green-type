@@ -1,12 +1,9 @@
-TEST_DATA_DIR = 'inference'
-
+import os
+import conftest
 from greentype.utils import PY2
 from greentype.compat import BUILTINS_NAME
 
-
-def index_builtins_and_module(analyzer, module_path):
-    analyzer.index_builtins()
-    analyzer.index_module(module_path)
+TEST_DATA_DIR = 'inference'
 
 
 def test_inheritance(analyzer):
@@ -24,7 +21,7 @@ def test_builtins(analyzer):
         BUILTINS_NAME + '.dict',
         BUILTINS_NAME + '.set'
     })
-    analyzer.assert_inferred('builtins.check_collections.y', {BUILTINS_NAME + '.list',})
+    analyzer.assert_inferred('builtins.check_collections.y', {BUILTINS_NAME + '.list', })
 
     if PY2:
         analyzer.assert_inferred('builtins.check_strings.x', {
@@ -47,3 +44,15 @@ def test_builtins(analyzer):
     else:
         analyzer.assert_inferred('builtins.check_strings.y', {BUILTINS_NAME + '.str'})
 
+
+def test_diamonds():
+    def check(module_name, classes):
+        analyzer = conftest.TestAnalyzer(os.getcwd())
+        analyzer.index_module(name=module_name)
+        analyzer.assert_inferred(module_name + '.func.x', classes)
+
+    check('diamond_top', {'diamond_top.D'})
+    check('diamond_bottom', {'diamond_bottom.A'})
+    check('diamond_siblings', {'diamond_siblings.B', 'diamond_siblings.C'})
+    check('diamond_left', {'diamond_left.B'})
+    check('diamond_disjointed', {'diamond_disjointed.B', 'diamond_disjointed.D'})
