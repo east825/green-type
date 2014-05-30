@@ -7,6 +7,7 @@ import inspect
 import json
 import logging
 from contextlib import contextmanager
+from collections import defaultdict
 import operator
 import os
 import random
@@ -16,12 +17,18 @@ import textwrap
 from . import ast_utils
 from . import utils
 from .utils import memoized
-from .compat import PY2, BUILTINS_NAME, indent
+from .compat import PY2, BUILTINS_NAME, indent, open
 
+try:
+    import configparser
+except ImportError:
+    import ConfigParser as configparser
+
+PROJECT_NAME = 'greentype'
+CONFIG_NAME = '{}.cfg'.format(PROJECT_NAME)
 
 LOG = logging.getLogger(__name__)
 
-from collections import defaultdict
 
 # TODO: it's better to be Trie, views better to be immutable
 class Index(defaultdict):
@@ -104,17 +111,17 @@ class Config(dict):
     __defaults = {
         'FOLLOW_IMPORTS': True,
         'BUILTINS': sys.builtin_module_names + ((
-            '_socket',
-            'datetime',
-            '_collections'
-        ) if PY2 else ()),
+                                                    '_socket',
+                                                    'datetime',
+                                                    '_collections'
+                                                ) if PY2 else ()),
 
         'TARGET_NAME': None,
         'TARGET_PATH': None,
 
         'PROJECT_ROOT': None,
         'PROJECT_NAME': None,
-        'SOURCE_ROOTS': None,
+        'SOURCE_ROOTS': [],
 
         'VERBOSE': False,
         'ANALYZE_BUILTINS': True
@@ -146,6 +153,26 @@ class Config(dict):
                 d[name] = getattr(obj, name)
         self.merge_with(d)
 
+    def update_from_cfg_file(self, path):
+        # Not that only source roots are supported for now
+        config = configparser.ConfigParser()
+        try:
+            config.read(path)
+        except configparser.ParsingError as e:
+            LOG.exception('Cannot parse config file %r', path)
+            return
+        # location of config determine project root
+        config_dir = os.path.dirname(os.path.abspath(path))
+        self['PROJECT_ROOT'] = config_dir
+        if config.has_option(PROJECT_NAME, 'source-roots'):
+            roots = config.get(PROJECT_NAME, 'source-roots').split(':')
+            for i, root in enumerate(roots):
+                if not os.path.isabs(root):
+                    roots[i] = os.path.join(config_dir, root)
+            # explicit roots override defaults
+            if roots:
+                self['SOURCE_ROOTS'] = roots
+
 
 class GreenTypeAnalyzer(object):
     def __init__(self, target_path):
@@ -158,6 +185,7 @@ class GreenTypeAnalyzer(object):
         }
 
         self.config = Config()
+        target_path = os.path.abspath(target_path)
         self.config['TARGET_PATH'] = target_path
         if os.path.isfile(target_path):
             project_root = os.path.dirname(target_path)
@@ -174,6 +202,12 @@ class GreenTypeAnalyzer(object):
         # source_roots = list(source_roots)
         # source_roots.insert(0, project_root)
         self.config['SOURCE_ROOTS'] = [project_root]
+        for parent_dir in utils.parent_directories(target_path, strict=False):
+            config_path = os.path.join(parent_dir, CONFIG_NAME)
+            if os.path.exists(config_path):
+                LOG.info('Found config file at %r. Using it to populate source roots', config_path)
+                self.config.update_from_cfg_file(config_path)
+                break
         self.statistics = defaultdict(StatisticUnit)
 
 
@@ -711,7 +745,8 @@ class SourceModuleIndexer(ast.NodeVisitor):
 
     def run(self):
         LOG.debug('Indexing module %r', self.module_path)
-        with open(self.module_path) as f:
+        # let ast deal with encoding by itself
+        with open(self.module_path, mode='br') as f:
             self.root = ast.parse(f.read(), self.module_path)
         ast_utils.interlink_ast(self.root)
         self.visit(self.root)
