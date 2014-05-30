@@ -27,9 +27,9 @@ else:
 
 import textwrap
 
-if hasattr(textwrap, 'indent'):
-    def indent(s, indent):
+if not hasattr(textwrap, 'indent'):
+    def indent(s, prefix):
         lines = s.splitlines(True)
-        return ''.join(indent + line for line in lines)
+        return ''.join(prefix + line for line in lines)
 else:
-    indent = lambda s, indent: textwrap.indent(s, indent)
+    indent = lambda s, prefix: textwrap.indent(s, prefix)

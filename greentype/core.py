@@ -440,7 +440,7 @@ class GreenTypeAnalyzer(object):
 
         def intersect(sets):
             if not sets:
-                return {}
+                return set()
             return functools.reduce(set.intersection, sets)
 
         class_pool = {attr: self.indexes['CLASS_ATTRIBUTE_INDEX'][attr] for attr in accessed_attrs}
