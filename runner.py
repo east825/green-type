@@ -114,7 +114,13 @@ def main():
                         with open(report_path, 'rb') as f:
                             report = json.load(f, encoding='utf-8')
                     else:
-                        statistics = analyze_project(project_path, args)
+                        try:
+                            statistics = analyze_project(project_path, args)
+                        except SyntaxError:
+                            print('Syntax error during analysis in {}. '
+                                  'Wrong Python version? Skipping.\n{}'
+                                  .format(project_name, traceback.format_exc(1)))
+                            continue
                         report = statistics.as_dict(with_samples=False)
                         if report['indexed']['in_project']['parameters'] == 0:
                             print('Nothing to analyze in {}. Skipping.'.format(project_name))
