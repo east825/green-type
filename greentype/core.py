@@ -1125,14 +1125,18 @@ class StatisticsReport(object):
               {} ({:.2%}) parameters with accessed attributes and exactly one inferred type,
               {} ({:.2%}) parameters with accessed attributes and more than one inferred type
             """.format(
-                total_attributeless, (total_attributeless / total_params),
-                sum(p.used_directly > 0 for p in attributeless_params) / total_attributeless,
-                sum(p.used_as_argument > 0 for p in attributeless_params) / total_attributeless,
-                sum(p.used_as_operand > 0 for p in attributeless_params) / total_attributeless,
-                sum(p.returned > 0 for p in attributeless_params) / total_attributeless,
-                total_undefined, (total_undefined / total_params),
-                total_inferred, (total_inferred / total_params),
-                total_scattered, (total_scattered / total_params)))
+                total_attributeless, (total_attributeless / total_params) if total_params else 0,
+                (sum(p.used_directly > 0 for p in attributeless_params) / total_attributeless) if
+                total_attributeless else 0,
+                (sum(p.used_as_argument > 0 for p in attributeless_params) / total_attributeless)
+                if total_attributeless else 0,
+                (sum(p.used_as_operand > 0 for p in attributeless_params) / total_attributeless)
+                if total_attributeless else 0,
+                sum(p.returned > 0 for p in attributeless_params) / total_attributeless
+                if total_attributeless else 0,
+                total_undefined, (total_undefined / total_params) if total_params else 0,
+                total_inferred, (total_inferred / total_params) if total_params else 0,
+                total_scattered, (total_scattered / total_params) if total_params else 0))
 
             formatted += self._format_list(
                 header='Parameters with scattered type (top {}):'.format(self.top_size),
