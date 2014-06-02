@@ -170,8 +170,8 @@ class Config(dict):
                 if not os.path.isabs(root):
                     roots[i] = os.path.join(config_dir, root)
             # explicit roots override defaults
-            if roots:
-                self['SOURCE_ROOTS'] = roots
+            roots.insert(0, config_dir)
+            self['SOURCE_ROOTS'] = roots
 
 
 class GreenTypeAnalyzer(object):
@@ -205,9 +205,10 @@ class GreenTypeAnalyzer(object):
         for parent_dir in utils.parent_directories(target_path, strict=False):
             config_path = os.path.join(parent_dir, CONFIG_NAME)
             if os.path.exists(config_path):
-                LOG.info('Found config file at %r. Using it to populate source roots', config_path)
+                LOG.info('Found config file at %r.', config_path)
                 self.config.update_from_cfg_file(config_path)
                 break
+        LOG.info('Source roots %r.', self.source_roots)
         self.statistics = defaultdict(StatisticUnit)
 
 
