@@ -1,9 +1,11 @@
-import os
 import platform
 import time
+import pytest
 
 from greentype import utils
+
 from conftest import TEST_ROOT, TEST_DATA_ROOT
+
 
 def test_camel_to_snake():
     assert utils.camel_to_snake('') == ''
@@ -76,6 +78,7 @@ def test_timed(capsys):
     utils.timed('msg #5', time.sleep, (0.1,))
     assert capsys.readouterr()[0] == 'msg #5: 0.10s\n'
 
+
 def test_parent_directories(tmpdir):
     def parents(start, stop, strict):
         return list(utils.parent_directories(start, stop, strict))
@@ -87,7 +90,6 @@ def test_parent_directories(tmpdir):
 
         assert parents('/', '/', False) == []
         assert parents('/', '/', True) == []
-
 
     root_path = tmpdir.strpath
     file = tmpdir.ensure('foo/bar/baz/file.txt')
@@ -112,5 +114,37 @@ def test_parent_directories(tmpdir):
 
     assert list(utils.parent_directories(__file__, TEST_ROOT, False)) == []
     assert list(utils.parent_directories(__file__, TEST_ROOT, True)) == []
+
+
+def test_dict_merge():
+    assert utils.dict_merge(
+        {
+            'foo': {1, 2},
+            'bar': frozenset('ab'),
+            'baz': [1, None, 'ham'],
+            'quux': {'key': 'identical'}
+        }, {
+            'foo': {3},
+            'bar': frozenset('c'),
+            'baz': ['spam'],
+            'quux': {'key': 'identical'}
+        }) == {
+               'foo': {1, 2, 3},
+               'bar': frozenset('abc'),
+               'baz': [1, None, 'ham', 'spam'],
+               'quux': {'key': 'identical'}
+           }
+
+    assert utils.dict_merge({'foo': None}, {'foo': 42}, override_none=True) == {'foo': 42}
+    assert utils.dict_merge({'foo': None}, {'foo': 42}, override=True) == {'foo': 42}
+    assert utils.dict_merge({}, {'foo': 42}, add_new=False, silent=True) == {}
+
+    with pytest.raises(ValueError):
+        utils.dict_merge({}, {'foo': 42}, add_new=False)
+
+    with pytest.raises(ValueError):
+        utils.dict_merge({'foo': 42}, {'foo': ()})
+
+
 
 

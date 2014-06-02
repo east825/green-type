@@ -19,10 +19,16 @@ from . import utils
 from .utils import memoized
 from .compat import PY2, BUILTINS_NAME, indent, open
 
+
 try:
     import configparser
 except ImportError:
     import ConfigParser as configparser
+
+try:
+    from UserDict import UserDict
+except ImportError:
+    from collections import UserDict
 
 PROJECT_NAME = 'greentype'
 CONFIG_NAME = '{}.cfg'.format(PROJECT_NAME)
@@ -105,10 +111,45 @@ class StatisticUnit(object):
                 return attr
 
 
-class Config(dict):
+class Config(UserDict):
     """Configuration similar to the one used in Flask."""
 
-    __defaults = {
+    def __init__(self, defaults, section_name):
+        UserDict.__init__(self, defaults.copy())
+        self.section_name = section_name
+
+    def merge(self, other):
+        self.data = utils.dict_merge(self.data, other, override=True)
+
+    def update_from_object(self, obj):
+        filtered = {k: v for k, v in vars(obj).items() if k in self.data}
+        self.merge(filtered)
+
+    def update_from_cfg_file(self, path):
+        # Not that only source roots are supported for now
+        config = configparser.ConfigParser()
+        config.optionxform = str.upper
+        config.read(path)
+        # location of config determine project root
+        filtered = {}
+        for name in config.options(self.section_name):
+            if name not in self:
+                continue
+            if isinstance(self[name], list):
+                filtered[name] = config.get(self.section_name, name).split(':')
+            elif isinstance(self[name], bool):
+                filtered[name] = config.getboolean(self.section_name, name)
+            elif isinstance(self[name], int):
+                filtered[name] = config.getint(self.section_name, name)
+            elif isinstance(self[name], float):
+                filtered[name] = config.getfloat(self.section_name, name)
+            else:
+                filtered[name] = config.get(self.section_name, name)
+        self.merge(filtered)
+
+
+class GreenTypeAnalyzer(object):
+    __default_settings = {
         'FOLLOW_IMPORTS': True,
         'BUILTINS': sys.builtin_module_names + ((
                                                     '_socket',
@@ -127,54 +168,6 @@ class Config(dict):
         'ANALYZE_BUILTINS': True
     }
 
-    def __init__(self, *args, **kwargs):
-        super(Config, self).__init__(self.__defaults)
-        self.merge_with(dict(*args, **kwargs))
-
-    def merge_with(self, other, override=True):
-        for k, v in other.items():
-            if k not in self:
-                raise ValueError('Unrecognized config parameter {}'.format(k))
-            # merge only lists for now
-            elif isinstance(self[k], list) and isinstance(v, list):
-                self[k] = self[k] + v
-            elif self[k] is None or override:
-                self[k] = v
-            elif self[k] == v:
-                pass
-            else:
-                raise ValueError('Cannot merge {!r} with {!r}'.format(self, other))
-
-    def update_from_object(self, obj):
-        d = {}
-        for name in dir(obj):
-            # if name in self.__defaults:
-            if name.isupper():
-                d[name] = getattr(obj, name)
-        self.merge_with(d)
-
-    def update_from_cfg_file(self, path):
-        # Not that only source roots are supported for now
-        config = configparser.ConfigParser()
-        try:
-            config.read(path)
-        except configparser.ParsingError as e:
-            LOG.exception('Cannot parse config file %r', path)
-            return
-        # location of config determine project root
-        config_dir = os.path.dirname(os.path.abspath(path))
-        self['PROJECT_ROOT'] = config_dir
-        if config.has_option(PROJECT_NAME, 'source-roots'):
-            roots = config.get(PROJECT_NAME, 'source-roots').split(':')
-            for i, root in enumerate(roots):
-                if not os.path.isabs(root):
-                    roots[i] = os.path.join(config_dir, root)
-            # explicit roots override defaults
-            roots.insert(0, config_dir)
-            self['SOURCE_ROOTS'] = roots
-
-
-class GreenTypeAnalyzer(object):
     def __init__(self, target_path):
         self.indexes = {
             'MODULE_INDEX': Index(None),
@@ -184,7 +177,7 @@ class GreenTypeAnalyzer(object):
             'CLASS_ATTRIBUTE_INDEX': Index(set)
         }
 
-        self.config = Config()
+        self.config = Config(self.__default_settings, PROJECT_NAME)
         target_path = os.path.abspath(target_path)
         self.config['TARGET_PATH'] = target_path
         if os.path.isfile(target_path):
@@ -196,18 +189,22 @@ class GreenTypeAnalyzer(object):
                              'Should be either file or directory.'.format(target_path))
         self.config['PROJECT_ROOT'] = project_root
         self.config['PROJECT_NAME'] = os.path.basename(target_path)
-        # if not source_roots:
-        # source_roots = [project_root]
-        # else:
-        # source_roots = list(source_roots)
-        # source_roots.insert(0, project_root)
-        self.config['SOURCE_ROOTS'] = [project_root]
+
         for parent_dir in utils.parent_directories(target_path, strict=False):
             config_path = os.path.join(parent_dir, CONFIG_NAME)
             if os.path.exists(config_path):
                 LOG.info('Found config file at %r.', config_path)
                 self.config.update_from_cfg_file(config_path)
+                self.config['PROJECT_ROOT'] = os.path.dirname(os.path.abspath(config_path))
                 break
+
+        for i, path in enumerate(self.config['SOURCE_ROOTS']):
+            if not os.path.isabs(path):
+                self.config['SOURCE_ROOTS'][i] = os.path.join(self.config['PROJECT_ROOT'], path)
+
+        if self.config['PROJECT_ROOT'] not in self.config['SOURCE_ROOTS']:
+            self.config['SOURCE_ROOTS'].insert(0, self.config['PROJECT_ROOT'])
+
         LOG.info('Source roots %r.', self.source_roots)
         self.statistics = defaultdict(StatisticUnit)
 
