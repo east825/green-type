@@ -477,22 +477,10 @@ class GreenTypeAnalyzer(object):
                 return set()
             return functools.reduce(set.intersection, sets)
 
-        class_pool = {attr: self.indexes['CLASS_ATTRIBUTE_INDEX'][attr] for attr in accessed_attrs}
-        if not class_pool:
-            return set()
-        with_any_attribute = unite(class_pool.values())
-
-        # with_all_attributes = intersect(class_pool.values())
-        # suitable_classes = set(with_all_attributes)
-        # for class_def in with_any_attribute - with_all_attributes:
-        # bases = resolve_bases(class_def)
-        # all_attrs = unite(b.attributes for b in bases) | class_def.attributes
-        # if accessed_attrs <= all_attrs:
-        # suitable_classes.add(class_def)
-
         # More fair algorithm because it considers newly discovered bases classes as well
-        suitable_classes = set()
-        candidates = set(with_any_attribute)
+        index = self.indexes['CLASS_ATTRIBUTE_INDEX']
+        candidates = unite(index[attr] for attr in accessed_attrs)
+        suitable = set()
         checked = set()
         while candidates:
             candidate = candidates.pop()
@@ -500,24 +488,23 @@ class GreenTypeAnalyzer(object):
             bases = self._resolve_bases(candidate)
 
             # register number of base classes for statistics
-            num_bases = len(bases)
-            self.statistics['max_bases'].set_max(num_bases, candidate.qname)
+            self.statistics['max_bases'].set_max(len(bases), candidate.qname)
 
-            all_attrs = unite(b.attributes for b in bases) | candidate.attributes
-            if accessed_attrs <= all_attrs:
-                suitable_classes.add(candidate)
+            available_attrs = unite(b.attributes for b in bases) | candidate.attributes
+            if accessed_attrs <= available_attrs:
+                suitable.add(candidate)
             for base in bases:
-                if base in candidates or base in checked:
+                if base in checked:
                     continue
                 if any(attr in base.attributes for attr in accessed_attrs):
                     candidates.add(base)
 
         # remove subclasses if their superclasses is suitable also
-        for cls in suitable_classes.copy():
-            if any(base in suitable_classes for base in self._resolve_bases(cls)):
-                suitable_classes.remove(cls)
+        for cls in suitable.copy():
+            if any(base in suitable for base in self._resolve_bases(cls)):
+                suitable.remove(cls)
 
-        return suitable_classes
+        return suitable
 
 
 class Definition(object):
@@ -1125,13 +1112,17 @@ class StatisticsReport(object):
               {} ({:.2%}) parameters with accessed attributes and more than one inferred type
             """.format(
                 total_attributeless, (total_attributeless / total_params),
-                sum(p.used_directly > 0 for p in attributeless_params) / total_attributeless,
-                sum(p.used_as_argument > 0 for p in attributeless_params) / total_attributeless,
-                sum(p.used_as_operand > 0 for p in attributeless_params) / total_attributeless,
-                sum(p.returned > 0 for p in attributeless_params) / total_attributeless,
-                total_undefined, (total_undefined / total_params),
-                total_inferred, (total_inferred / total_params),
-                total_scattered, (total_scattered / total_params)))
+                (sum(p.used_directly > 0 for p in attributeless_params) / total_attributeless) if
+                total_attributeless else 0,
+                (sum(p.used_as_argument > 0 for p in attributeless_params) / total_attributeless) if
+                total_attributeless else 0,
+                (sum(p.used_as_operand > 0 for p in attributeless_params) / total_attributeless) if
+                total_attributeless else 0,
+                (sum(p.returned > 0 for p in attributeless_params) / total_attributeless) if
+                total_attributeless else 0,
+                total_undefined, (total_undefined / total_params) if total_params else 0,
+                total_inferred, (total_inferred / total_params) if total_params else 0,
+                total_scattered, (total_scattered / total_params)) if total_params else 0)
 
             formatted += self._format_list(
                 header='Parameters with scattered type (top {}):'.format(self.top_size),
