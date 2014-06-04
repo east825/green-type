@@ -185,7 +185,7 @@ def main():
             if args.json:
                 print(statistics.format_json(with_samples=True))
             else:
-                print(statistics.format_text())
+                print(statistics.format_text(dump_params=args.dump_params))
 
     except Exception:
         traceback.print_exc()

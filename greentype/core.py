@@ -897,15 +897,6 @@ class SourceModuleIndexer(ast.NodeVisitor):
 class StatisticsReport(object):
     def __init__(self, analyzer):
         self.analyzer = analyzer
-        self.show_total = True
-        self.show_prolific_params = True
-        self.show_param_types = True
-        self.show_random_inferred = True
-        self.dump_functions = False
-        self.dump_classes = False
-        self.dump_params = True
-        self.dump_usages = False
-        self.top_size = 20
         self.prefix = analyzer.config['TARGET_NAME'] or ''
 
         self.modules = list(analyzer.indexes['MODULE_INDEX'].values())
@@ -1090,98 +1081,87 @@ class StatisticsReport(object):
                             'path': o.path
                         }
                 return super(Dumper, self).default(o)
+
         return json.dumps(self.as_dict(with_samples, sample_size), cls=Dumper, indent=2)
 
 
-    def format_text(self):
-        formatted = ''
-        if self.show_total:
-            formatted += '\nTotal indexed: {} classes with {} attributes, ' \
-                         '{} functions with {} parameters'.format(
-                len(self.classes),
-                len(self.analyzer.indexes['CLASS_ATTRIBUTE_INDEX']),
-                len(self.functions),
-                len(self.parameters))
+    def format_text(self, with_samples=True, samples_size=20, dump_classes=False,
+                    dump_functions=False, dump_params=False):
+        d = self.as_dict(with_samples=with_samples)
+        formatted = '\nTotal indexed: ' \
+                     '{} classes, ' \
+                     '{} functions with {} parameters'.format(
+            d['indexed']['total']['classes'],
+            d['indexed']['total']['functions'],
+            d['indexed']['total']['parameters'])
 
-            formatted += '\nIn project: {} classes, {} functions with {} parameters'.format(
-                len(self.project_classes),
-                len(self.project_functions),
-                len(self.project_parameters))
+        formatted += '\nIn project: ' \
+                     '{} classes, ' \
+                     '{} functions with {} parameters'.format(
+            d['indexed']['in_project']['classes'],
+            d['indexed']['in_project']['functions'],
+            d['indexed']['in_project']['parameters'])
 
-        if self.show_prolific_params:
-            prolific_params = self.most_attributes_parameters(self.top_size)
-            formatted += self._format_list(
-                header='Most frequently accessed parameters (top {}):'.format(self.top_size),
-                items=prolific_params,
-                prefix_func=lambda x: '{:3} attributes'.format(len(x.attributes))
-            )
+        formatted += self._format_list(
+            header='Most frequently accessed parameters (top {}):'.format(samples_size),
+            items=d['project_statistics']['parameters']['accessed_attributes']['top'],
+            prefix_func=lambda x: '{:3} attributes'.format(len(x.attributes))
+        )
 
-        if self.show_param_types:
-            total_params = len(self.project_parameters)
-            attributeless_params = self.attributeless_parameters
-            total_attributeless = len(attributeless_params)
-            total_undefined = len(self.undefined_type_parameters)
-            total_inferred = len(self.exact_type_parameters)
-            total_scattered = len(self.scattered_type_parameters)
-            formatted += textwrap.dedent("""
-            Parameters statistic:
-              {} ({:.2%}) parameters have no attributes (types cannot be inferred):
-              However, of them:
-                - {:.2%} used directly somehow (no attribute access or subscripts)
-                - {:.2%} passed as arguments to other function
-                - {:.2%} used as operands in arithmetic or logical expressions
-                - {:.2%} returned from function
-              {} ({:.2%}) parameters with accessed attributes, but with no inferred type,
-              {} ({:.2%}) parameters with accessed attributes and exactly one inferred type,
-              {} ({:.2%}) parameters with accessed attributes and more than one inferred type
-            """.format(
-                total_attributeless, (total_attributeless / total_params) if total_params else 0,
-                (sum(p.used_directly > 0 for p in attributeless_params) / total_attributeless) if
-                total_attributeless else 0,
-                (sum(p.used_as_argument > 0 for p in attributeless_params) / total_attributeless)
-                if total_attributeless else 0,
-                (sum(p.used_as_operand > 0 for p in attributeless_params) / total_attributeless)
-                if total_attributeless else 0,
-                sum(p.returned > 0 for p in attributeless_params) / total_attributeless
-                if total_attributeless else 0,
-                total_undefined, (total_undefined / total_params) if total_params else 0,
-                total_inferred, (total_inferred / total_params) if total_params else 0,
-                total_scattered, (total_scattered / total_params) if total_params else 0))
+        stat = d['project_statistics']['parameters']
+        formatted += textwrap.dedent("""
+        Parameters statistic:
+          {} ({:.2%}) parameters have no attributes (types cannot be inferred):
+          However, of them:
+            - {:.2%} passed as arguments to other function
+            - {:.2%} used as operands in arithmetic or logical expressions
+            - {:.2%} returned from function
+            - {:.2%} unused
+          {} ({:.2%}) parameters with accessed attributes, but with no inferred type,
+          {} ({:.2%}) parameters with accessed attributes and exactly one inferred type,
+          {} ({:.2%}) parameters with accessed attributes and more than one inferred type
+        """.format(
+            stat['attributeless']['total'], stat['attributeless']['rate'],
+            stat['attributeless']['usages']['argument']['rate'],
+            stat['attributeless']['usages']['operand']['rate'],
+            stat['attributeless']['usages']['returned']['rate'],
+            stat['attributeless']['usages']['unused']['rate'],
+            stat['undefined_type']['total'], stat['undefined_type']['rate'],
+            stat['exact_type']['total'], stat['exact_type']['rate'],
+            stat['scattered_type']['total'], stat['scattered_type']['rate']
+        ))
 
-            formatted += self._format_list(
-                header='Parameters with scattered type (top {}):'.format(self.top_size),
-                items=self.most_types_parameters(self.top_size),
-                prefix_func=lambda x: '{:3} types'.format(len(x.suggested_types))
-            )
+        formatted += self._format_list(
+            header='Parameters with scattered type (top {}):'.format(samples_size),
+            items=stat['scattered_type']['sample'],
+            prefix_func=lambda x: '{:3} types'.format(len(x.suggested_types))
+        )
 
-            formatted += self._format_list(
-                header='Parameters with accessed attributes, '
-                       'but with no suggested classes (first {})'.format(self.top_size),
-                items=self.undefined_type_parameters[:self.top_size]
-            )
+        formatted += self._format_list(
+            header='Parameters with accessed attributes, '
+                   'but with no suggested classes (first {})'.format(samples_size),
+            items=stat['undefined_type']['sample']
+        )
 
-            formatted += self._format_list(
-                header='Parameters that have no attributes and not used directly '
-                       'elsewhere (first {})'.format(self.top_size),
-                items=self.unused_parameters[:self.top_size]
-            )
+        formatted += self._format_list(
+            header='Parameters that have no attributes and not used directly '
+                   'elsewhere (first {})'.format(samples_size),
+            items=stat['attributeless']['usages']['unused']['sample']
+        )
 
-        if self.show_random_inferred:
-            params = list(self._filter_name_prefix(self.exact_type_parameters))
-            quantity = min(self.top_size, len(params))
-            formatted += self._format_list(
-                header='Parameters with definitively inferred types '
-                       '(random {}, total {})'.format(quantity, len(params)),
-                items=random.sample(params, quantity)
-            )
+        formatted += self._format_list(
+            header='Parameters with definitively inferred types '
+                   '(first {})'.format(samples_size),
+            items=stat['exact_type']['sample'],
+        )
 
-        if self.dump_classes:
+        if dump_classes:
             classes = self._filter_name_prefix(self.project_classes)
             formatted += self._format_list(header='Classes:', items=classes)
-        if self.dump_functions:
+        if dump_functions:
             functions = self._filter_name_prefix(self.project_functions)
             formatted += self._format_list(header='Functions:', items=functions)
-        if self.dump_params:
+        if dump_params:
             parameters = self._filter_name_prefix(self.project_parameters)
             chunks = []
             for param in sorted(parameters, key=operator.attrgetter('qname')):
