@@ -973,15 +973,11 @@ class StatisticsReport(object):
                 return filtered
             return obj
 
-
         def sample(items):
             if not with_samples:
                 return invisible
 
-            items = list(map(str, items))
-            if len(items) < sample_size:
-                return items
-            return items[:sample_size]
+            return list(items)[:sample_size]
 
         def rate(items, population, sample_items=None, with_samples=with_samples):
             d = {
@@ -1021,7 +1017,7 @@ class StatisticsReport(object):
                     'attributeless': {
                         'total': len(self.attributeless_parameters),
                         'rate': len(self.attributeless_parameters) / len(self.project_parameters) \
-                            if self.project_parameters else 0,
+                            if self.attributeless_parameters else 0,
                         'sample': sample(self.attributeless_parameters),
                         'usages': {
                             'argument': rate(
@@ -1067,8 +1063,34 @@ class StatisticsReport(object):
 
         return filter_invisible(d)
 
-    def format_json(self, with_samples=False, sample_size=20):
-        return json.dumps(self.as_dict(with_samples, sample_size), indent=2)
+    def format_json(self, with_samples=False, sample_size=20, expand_definitions=True):
+        class Dumper(json.JSONEncoder):
+            def default(self, o):
+                if expand_definitions:
+                    if isinstance(o, ParameterDef):
+                        return {
+                            'qualified_name': o.qname,
+                            'accessed_attributes': list(o.attributes),
+                            'suggested_classes': list(o.suggested_types)
+                        }
+                    elif isinstance(o, ClassDef):
+                        return {
+                            'qualified_name': o.qname,
+                            'bases': list(o.bases),
+                            'declared_attributes': list(o.attributes)
+                        }
+                    elif isinstance(o, FunctionDef):
+                        return {
+                            'qualified_name': o.qname,
+                            'parameters': [p.name for p in o.parameters]
+                        }
+                    elif isinstance(o, ModuleDef):
+                        return {
+                            'qualified_name': o.qname,
+                            'path': o.path
+                        }
+                return super(Dumper, self).default(o)
+        return json.dumps(self.as_dict(with_samples, sample_size), cls=Dumper, indent=2)
 
 
     def format_text(self):
