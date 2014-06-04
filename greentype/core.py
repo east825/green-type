@@ -326,7 +326,8 @@ class GreenTypeAnalyzer(object):
 
     def module_name_to_path(self, module_name):
         rel_path = os.path.join(*module_name.split('.'))
-        for src_root in self.source_roots + sys.path:
+        roots = self.source_roots + [p for p in sys.path if p not in ('', '.', os.getcwd())]
+        for src_root in roots:
             path = os.path.join(src_root, rel_path)
             package_path = os.path.join(path, '__init__.py')
             if os.path.isfile(package_path):
