@@ -136,11 +136,21 @@ def main():
             print('Total {:d} projects'.format(len(project_reports)))
 
             metrics = [
-                ('Attributeless parameters', 'project_statistics.parameters.attributeless.rate'),
-                ('Undefined type parameters', 'project_statistics.parameters.undefined_type.rate'),
+                ('Attributeless parameters',
+                 'project_statistics.parameters.attributeless.rate'),
+                ('Attributeless parameters passed to other function',
+                 'project_statistics.parameters.attributeless.usages.argument.rate'),
+                ('Attributeless parameters used as operand',
+                 'project_statistics.parameters.attributeless.usages.operand.rate'),
+                ('Attributeless parameters used as function return value',
+                 'project_statistics.parameters.attributeless.usages.returned.rate'),
+                ('Undefined type parameters',
+                 'project_statistics.parameters.undefined_type.rate'),
                 ('Exact type parameters', 'project_statistics.parameters.exact_type.rate'),
-                ('Scattered type parameters', 'project_statistics.parameters.scattered_type.rate'),
-                ('Maximum number of base classes', 'project_statistics.additional.max_bases.max'),
+                ('Scattered type parameters',
+                 'project_statistics.parameters.scattered_type.rate'),
+                ('Maximum number of base classes',
+                 'project_statistics.additional.max_bases.max'),
             ]
 
             for title, path in metrics:
@@ -152,7 +162,10 @@ def main():
                     value_sources[value] = report['project_root']
 
                 mean = sum(values) / len(values)
-                variance = sum((x - mean) ** 2 for x in values) / len(values)
+                if len(values) > 1:
+                    variance = sum((x - mean) ** 2 for x in values) / (len(values) - 1)
+                else:
+                    variance = 0
                 min_value = min(values)
                 max_value = max(values)
 
