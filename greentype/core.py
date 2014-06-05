@@ -193,6 +193,7 @@ class GreenTypeAnalyzer(object):
         self.config['PROJECT_NAME'] = os.path.basename(target_path)
 
         LOG.info('Source roots %r.', self.source_roots)
+        self._broken_modules = set()
         self.statistics = defaultdict(StatisticUnit)
 
 
@@ -296,29 +297,32 @@ class GreenTypeAnalyzer(object):
 
     def index_module(self, path=None, name=None):
         if name is None and path is None:
-            raise ValueError('Either module name or module path should be given')
+            raise ValueError('Either module name or module path should be given.')
+
+        if name in self._broken_modules or path in self._broken_modules:
+            return None
 
         if path is not None:
             try:
                 name = self.path_to_module_name(path)
-            except ValueError as e:
-                LOG.warning(e)
+            except ValueError:
+                LOG.warning('Module %r is unreachable from sources roots.', path)
+                self._broken_modules.add(path)
                 return None
-            loaded = self.indexes['MODULE_INDEX'].get(name)
-            if loaded:
-                return loaded
         else:
-            loaded = self.indexes['MODULE_INDEX'].get(name)
-            if loaded:
-                return loaded
             try:
                 path = self.module_name_to_path(name)
             except ValueError as e:
-                LOG.warning(e)
+                LOG.warning('Module %r is not found under source roots.', name)
+                self._broken_modules.add(name)
                 return None
 
+        loaded = self.indexes['MODULE_INDEX'].get(name)
+        if loaded:
+            return loaded
+
         if self.is_excluded(path):
-            LOG.debug('File %r is explicitly excluded from project', path)
+            LOG.debug('File %r is explicitly excluded from project.', path)
             return None
 
         module_indexed = SourceModuleIndexer(self, path).run()
