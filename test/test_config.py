@@ -5,22 +5,47 @@ from greentype.core import Config
 TEST_DATA_DIR = 'config'
 
 
-def test_project_config_discovery():
+def test_project_config():
+
+    def abs_path(path):
+        return os.path.abspath(path)
+
+    def project_path(analyzer, path):
+        if not os.path.isabs(path):
+            return os.path.join(analyzer.project_root, path)
+        return path
+
     analyzer = TestAnalyzer('project/src1/module1.py')
     assert analyzer.project_name == 'config-test'
     assert 'SOME_PARAM' not in analyzer.config
-    assert analyzer.project_root == os.path.abspath('project')
+    assert analyzer.project_root == abs_path('project')
     assert analyzer.source_roots == [analyzer.project_root,
-                                     os.path.abspath('project/src1'),
-                                     os.path.abspath('project/src2')]
+                                     abs_path('project/src1'),
+                                     abs_path('project/src2')]
+
+    assert analyzer.excluded == [project_path(analyzer, 'excluded'),
+                                 project_path(analyzer, 'excluded/included/excluded_explicitly.py')]
+    assert analyzer.included == [project_path(analyzer, 'excluded/included')]
+
+    assert analyzer.is_project_file('project/excluded/included/module.py')
+    assert analyzer.is_project_file(project_path(analyzer, 'excluded/included/module.py'))
+
+    # included files checked first
+    assert analyzer.is_project_file('project/excluded/included/excluded_explicitly.py')
+    assert analyzer.is_project_file('project/src1/module1.py')
+    assert analyzer.is_project_file('project/greentype.cfg')
+
+    assert not analyzer.is_project_file('project/excluded/module.py')
+    assert not analyzer.is_project_file('project/excluded')
+
 
 def test_config_merging():
     conf = Config({
-        'PATHS': [],
-        'NUMBER': 0,
-        'NAME': 'foo',
-        'UNDEFINED': None,
-    }, 'custom')
+                      'PATHS': [],
+                      'NUMBER': 0,
+                      'NAME': 'foo',
+                      'UNDEFINED': None,
+                  }, 'custom')
 
     assert conf['PATHS'] == []
     assert conf['NUMBER'] == 0

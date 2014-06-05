@@ -149,26 +149,26 @@ class Config(UserDict):
 
 
 class GreenTypeAnalyzer(object):
-    __default_settings = {
-        'FOLLOW_IMPORTS': True,
-        'BUILTINS': sys.builtin_module_names + ((
-                                                    '_socket',
-                                                    'datetime',
-                                                    '_collections'
-                                                ) if PY2 else ()),
-
-        'TARGET_NAME': None,
-        'TARGET_PATH': None,
-
-        'PROJECT_ROOT': None,
-        'PROJECT_NAME': None,
-        'SOURCE_ROOTS': [],
-
-        'VERBOSE': False,
-        'ANALYZE_BUILTINS': True
-    }
-
     def __init__(self, target_path):
+        defaults = {
+            'FOLLOW_IMPORTS': True,
+            'BUILTINS': list(sys.builtin_module_names),
+
+            'TARGET_NAME': None,
+            'TARGET_PATH': None,
+
+            'PROJECT_ROOT': None,
+            'PROJECT_NAME': None,
+            'SOURCE_ROOTS': [],
+            'EXCLUDED': [],
+            'INCLUDED': [],
+
+            'VERBOSE': False,
+            'ANALYZE_BUILTINS': True
+        }
+        if PY2:
+            defaults['BUILTINS'] += ['_socket', 'datetime', '_collections']
+
         self.indexes = {
             'MODULE_INDEX': Index(None),
             'CLASS_INDEX': Index(None),
@@ -177,7 +177,7 @@ class GreenTypeAnalyzer(object):
             'CLASS_ATTRIBUTE_INDEX': Index(set)
         }
 
-        self.config = Config(self.__default_settings, PROJECT_NAME)
+        self.config = Config(defaults, PROJECT_NAME)
         target_path = os.path.abspath(target_path)
         self.config['TARGET_PATH'] = target_path
         if os.path.isfile(target_path):
@@ -197,13 +197,6 @@ class GreenTypeAnalyzer(object):
                 self.config.update_from_cfg_file(config_path)
                 self.config['PROJECT_ROOT'] = os.path.dirname(os.path.abspath(config_path))
                 break
-
-        for i, path in enumerate(self.config['SOURCE_ROOTS']):
-            if not os.path.isabs(path):
-                self.config['SOURCE_ROOTS'][i] = os.path.join(self.config['PROJECT_ROOT'], path)
-
-        if self.config['PROJECT_ROOT'] not in self.config['SOURCE_ROOTS']:
-            self.config['SOURCE_ROOTS'].insert(0, self.config['PROJECT_ROOT'])
 
         LOG.info('Source roots %r.', self.source_roots)
         self.statistics = defaultdict(StatisticUnit)
@@ -227,27 +220,55 @@ class GreenTypeAnalyzer(object):
 
     @property
     def source_roots(self):
-        return self.config['SOURCE_ROOTS']
+        result = self._absolutize_paths(self.config['SOURCE_ROOTS'])
+        if not self.project_root in result:
+            result.insert(0, self.project_root)
+        return result
 
-    def _filter_root(self, definitions):
-        return [d for d in definitions
-                if d.module and d.module.path.startswith(self.project_root)]
+    @property
+    def included(self):
+        return self._absolutize_paths(self.config['INCLUDED'])
+
+    @property
+    def excluded(self):
+        return self._absolutize_paths(self.config['EXCLUDED'])
+
+    def _project_definitions(self, defs):
+        return [d for d in defs if d.module and self.is_project_file(d.module.path)]
+
+    def _absolutize_paths(self, paths):
+        result = []
+        for path in paths:
+            if not os.path.isabs(path):
+                result.append(os.path.join(self.project_root, path))
+            else:
+                result.append(path)
+        return result
+
+    def is_project_file(self, path):
+        path = os.path.abspath(path)
+        # TODO: use globs/regexes for greater flexibility
+        if any(path.startswith(prefix) for prefix in self.included):
+            return True
+        if any(path.startswith(prefix) for prefix in self.excluded):
+            return False
+        return path.startswith(self.project_root)
 
     @property
     def project_modules(self):
-        return self._filter_root(self.indexes['MODULE_INDEX'].values())
+        return self._project_definitions(self.indexes['MODULE_INDEX'].values())
 
     @property
     def project_classes(self):
-        return self._filter_root(self.indexes['CLASS_INDEX'].values())
+        return self._project_definitions(self.indexes['CLASS_INDEX'].values())
 
     @property
     def project_functions(self):
-        return self._filter_root(self.indexes['FUNCTION_INDEX'].values())
+        return self._project_definitions(self.indexes['FUNCTION_INDEX'].values())
 
     @property
     def project_parameters(self):
-        return self._filter_root(self.indexes['PARAMETER_INDEX'].values())
+        return self._project_definitions(self.indexes['PARAMETER_INDEX'].values())
 
     def invalidate_indexes(self):
         for index in self.indexes.values():
@@ -1086,8 +1107,8 @@ class StatisticsReport(object):
                     dump_functions=False, dump_params=False):
         d = self.as_dict(with_samples=with_samples)
         formatted = '\nTotal indexed: ' \
-                     '{} classes, ' \
-                     '{} functions with {} parameters'.format(
+                    '{} classes, ' \
+                    '{} functions with {} parameters'.format(
             d['indexed']['total']['classes'],
             d['indexed']['total']['functions'],
             d['indexed']['total']['parameters'])
