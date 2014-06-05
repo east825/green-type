@@ -1,4 +1,5 @@
 from __future__ import unicode_literals, print_function, division
+import argparse
 import ast
 import functools
 import heapq
@@ -32,6 +33,7 @@ except ImportError:
 
 PROJECT_NAME = 'greentype'
 CONFIG_NAME = '{}.cfg'.format(PROJECT_NAME)
+EXCLUDED_DIRECTORIES = frozenset(['.svn', 'CVS', '.bzr', '.hg', '.git', '__pycache__'])
 
 LOG = logging.getLogger(__name__)
 
@@ -190,19 +192,10 @@ class GreenTypeAnalyzer(object):
         self.config['PROJECT_ROOT'] = project_root
         self.config['PROJECT_NAME'] = os.path.basename(target_path)
 
-        for parent_dir in utils.parent_directories(target_path, strict=False):
-            config_path = os.path.join(parent_dir, CONFIG_NAME)
-            if os.path.exists(config_path):
-                LOG.info('Found config file at %r.', config_path)
-                self.config.update_from_cfg_file(config_path)
-                self.config['PROJECT_ROOT'] = os.path.dirname(os.path.abspath(config_path))
-                break
-
         LOG.info('Source roots %r.', self.source_roots)
         self.statistics = defaultdict(StatisticUnit)
 
 
-    @property
     def statistics_report(self):
         return StatisticsReport(self)
 
@@ -273,6 +266,29 @@ class GreenTypeAnalyzer(object):
     def invalidate_indexes(self):
         for index in self.indexes.values():
             index.clear()
+
+    def index_project(self):
+        print('Indexing project {!r} starting from {!r}'.format(self.project_root,
+                                                                self.target_path))
+        if os.path.isfile(self.target_path):
+            if not utils.is_python_source_module(self.target_path):
+                raise ValueError('Not a valid Python module {!r} '
+                                 '(should end with .py).'.format(self.target_path))
+            self.index_module(path=self.target_path)
+        elif os.path.isdir(self.target_path):
+            for dirpath, dirnames, filenames in os.walk(self.target_path):
+                for name in dirnames[:]:
+                    abs_path = os.path.abspath(os.path.join(dirpath, name))
+                    if name in EXCLUDED_DIRECTORIES:
+                        LOG.debug('Excluded directory: %r. Skipping.', abs_path)
+                        dirnames.remove(name)
+                for name in filenames:
+                    abs_path = os.path.abspath(os.path.join(dirpath, name))
+                    if not utils.is_python_source_module(abs_path) or \
+                            not self.is_project_file(abs_path):
+                        continue
+                    self.index_module(abs_path)
+
 
     def index_module(self, path=None, name=None):
         if name is None and path is None:
@@ -525,6 +541,69 @@ class GreenTypeAnalyzer(object):
                 suitable.remove(cls)
 
         return suitable
+
+    def discover_project_config(self):
+        for parent_dir in utils.parent_directories(self.target_path, strict=False):
+            config_path = os.path.join(parent_dir, CONFIG_NAME)
+            if os.path.exists(config_path):
+                LOG.info('Found config file at %r.', config_path)
+                self.config.update_from_cfg_file(config_path)
+                self.config['PROJECT_ROOT'] = os.path.dirname(os.path.abspath(config_path))
+                break
+
+    @classmethod
+    def main(cls):
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--src-roots', type=lambda x: x.split(':'), default=[],
+                            dest='SOURCE_ROOTS',
+                            help='Sources roots separated by colon.')
+
+        parser.add_argument('-t', '--target', default='',
+                            dest='TARGET_NAME',
+                            help='Target qualifier to restrict output.')
+
+        parser.add_argument('-L', '--follow-imports', action='store_true',
+                            dest='FOLLOW_IMPORTS',
+                            help='Follow imports during indexing.')
+
+        parser.add_argument('-B', '--no-builtins', action='store_false',
+                            dest='ANALYZE_BUILTINS',
+                            help='Not analyze built-in modules reflectively first.')
+
+        parser.add_argument('-d', '--dump-params', action='store_true',
+                            help='Dump parameters qualified by target.')
+
+        parser.add_argument('-v', '--verbose', action='store_true',
+                            dest='VERBOSE',
+                            help='Enable verbose output.')
+
+        parser.add_argument('--json', action='store_true',
+                            help='Dump analysis results in JSON.')
+
+        parser.add_argument('path',
+                            help='Path to single Python module or directory.')
+
+        args = parser.parse_args()
+        if args.VERBOSE:
+            LOG.setLevel(logging.DEBUG)
+
+        analyzer = cls(os.path.abspath(os.path.expanduser(args.path)))
+        analyzer.discover_project_config()
+        analyzer.config.update_from_object(args)
+
+        if analyzer.config['ANALYZE_BUILTINS']:
+            analyzer.index_builtins()
+
+        analyzer.index_project()
+
+        with utils.timed('Inferred types for parameters'):
+            analyzer.infer_parameter_types()
+
+        statistics = analyzer.statistics_report()
+        if args.json:
+            print(statistics.format_json(with_samples=True))
+        else:
+            print(statistics.format_text(dump_params=args.dump_params))
 
 
 class Definition(object):

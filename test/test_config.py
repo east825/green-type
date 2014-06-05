@@ -16,6 +16,7 @@ def test_project_config():
         return path
 
     analyzer = TestAnalyzer('project/src1/module1.py')
+    analyzer.discover_project_config()
     assert analyzer.project_name == 'config-test'
     assert 'SOME_PARAM' not in analyzer.config
     assert analyzer.project_root == abs_path('project')

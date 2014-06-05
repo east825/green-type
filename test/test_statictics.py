@@ -38,7 +38,7 @@ def test_dict_report_format(analyzer):
     analyzer.config['PROJECT_NAME'] = 'report.py'
     analyzer.index_module('report.py')
     analyzer.infer_parameter_types()
-    report = analyzer.statistics_report.as_dict(with_samples=False)
+    report = analyzer.statistics_report().as_dict(with_samples=False)
     assert report == {
         "indexed": {
             "total": {
