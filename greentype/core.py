@@ -16,6 +16,7 @@ import textwrap
 
 from . import ast_utils
 from . import utils
+import traceback
 from .utils import memoized
 from .compat import PY2, BUILTINS_NAME, indent, open
 
@@ -278,6 +279,11 @@ class GreenTypeAnalyzer(object):
         if not self.config['QUIET']:
             if not verbose or self.config['VERBOSE']:
                 print(msg)
+        LOG.info(msg)
+
+    def report_error(self, msg):
+        print(msg, file=sys.stderr)
+        LOG.error(msg)
 
 
     def index_project(self):
@@ -333,7 +339,14 @@ class GreenTypeAnalyzer(object):
             LOG.debug('File %r is explicitly excluded from project.', path)
             return None
 
-        module_indexed = SourceModuleIndexer(self, path).run()
+        try:
+            module_indexed = SourceModuleIndexer(self, path).run()
+        except SyntaxError as e:
+            self.report_error('Syntax error during indexing of {!r}. '
+                              'Wrong Python version?'.format(path))
+            LOG.error(traceback.format_exc(e))
+            self._broken_modules.add(path)
+            return None
 
         if self.config['FOLLOW_IMPORTS']:
             for imp in module_indexed.imports:
@@ -605,6 +618,9 @@ class GreenTypeAnalyzer(object):
                             dest='verbose_level',
                             help='Enable verbose output.')
 
+        parser.add_argument('-o', '--output', type=argparse.FileType(mode='wb'), default='-',
+                            help='File, where to write report.')
+
         # TODO: detect piping
         parser.add_argument('-q', '--quiet', action='store_true',
                             dest='QUIET',
@@ -633,14 +649,15 @@ class GreenTypeAnalyzer(object):
 
         analyzer.index_project()
 
-        with utils.timed('Inferred types for parameters'):
-            analyzer.infer_parameter_types()
+        # with utils.timed('Inferred types for parameters'):
+        analyzer.infer_parameter_types()
 
         statistics = analyzer.statistics_report()
-        if args.json:
-            print(statistics.format_json(with_samples=True))
-        else:
-            print(statistics.format_text(dump_params=args.dump_params))
+        with args.output as f:
+            if args.json:
+                f.write((statistics.format_json(with_samples=True)))
+            else:
+                f.write(statistics.format_text(dump_params=args.dump_params))
 
 
 class Definition(object):
