@@ -28,16 +28,16 @@ def test_project_config():
                                  project_path(analyzer, 'excluded/included/excluded_explicitly.py')]
     assert analyzer.included == [project_path(analyzer, 'excluded/included')]
 
-    assert analyzer.is_project_file('project/excluded/included/module.py')
-    assert analyzer.is_project_file(project_path(analyzer, 'excluded/included/module.py'))
+    assert analyzer.is_inside_project('project/excluded/included/module.py')
+    assert analyzer.is_inside_project(project_path(analyzer, 'excluded/included/module.py'))
 
     # included files checked first
-    assert analyzer.is_project_file('project/excluded/included/excluded_explicitly.py')
-    assert analyzer.is_project_file('project/src1/module1.py')
-    assert analyzer.is_project_file('project/greentype.cfg')
+    assert analyzer.is_inside_project('project/excluded/included/excluded_explicitly.py')
+    assert analyzer.is_inside_project('project/src1/module1.py')
+    assert analyzer.is_inside_project('project/greentype.cfg')
 
-    assert not analyzer.is_project_file('project/excluded/module.py')
-    assert not analyzer.is_project_file('project/excluded')
+    assert not analyzer.is_inside_project('project/excluded/module.py')
+    assert not analyzer.is_inside_project('project/excluded')
 
 
 def test_config_merging():

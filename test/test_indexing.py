@@ -1,3 +1,5 @@
+import conftest
+
 TEST_DATA_DIR = 'indexing'
 
 def test_self_filtering(analyzer):
@@ -25,6 +27,22 @@ def test_self_filtering(analyzer):
 
     assert 'self_filtering.MyClass.static_method.self' in index
     assert 'self_filtering.MyClass.static_method.x' in index
+
+def test_module_exclusion():
+    analyzer = conftest.TestAnalyzer('module_exclusion')
+    analyzer.config['EXCLUDE'] = ['excluded']
+    analyzer.config['INCLUDE'] = ['excluded/included']
+
+    analyzer.index_project()
+
+    assert 'main' in analyzer.indexes['MODULE_INDEX']
+    assert 'excluded' not in analyzer.indexes['MODULE_INDEX']
+    assert 'excluded.module' not in analyzer.indexes['MODULE_INDEX']
+    assert 'excluded.included' in analyzer.indexes['MODULE_INDEX']
+    assert 'excluded.included.module' in analyzer.indexes['MODULE_INDEX']
+
+
+
 
 
 

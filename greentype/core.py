@@ -162,8 +162,8 @@ class GreenTypeAnalyzer(object):
             'PROJECT_ROOT': None,
             'PROJECT_NAME': None,
             'SOURCE_ROOTS': [],
-            'EXCLUDED': [],
-            'INCLUDED': [],
+            'EXCLUDE': [],
+            'INCLUDE': [],
 
             'VERBOSE': False,
             'ANALYZE_BUILTINS': True
@@ -220,14 +220,14 @@ class GreenTypeAnalyzer(object):
 
     @property
     def included(self):
-        return self._absolutize_paths(self.config['INCLUDED'])
+        return self._absolutize_paths(self.config['INCLUDE'])
 
     @property
     def excluded(self):
-        return self._absolutize_paths(self.config['EXCLUDED'])
+        return self._absolutize_paths(self.config['EXCLUDE'])
 
     def _project_definitions(self, defs):
-        return [d for d in defs if d.module and self.is_project_file(d.module.path)]
+        return [d for d in defs if d.module and self.is_inside_project(d.module.path)]
 
     def _absolutize_paths(self, paths):
         result = []
@@ -238,14 +238,18 @@ class GreenTypeAnalyzer(object):
                 result.append(path)
         return result
 
-    def is_project_file(self, path):
+    def is_excluded(self, path):
         path = os.path.abspath(path)
         # TODO: use globs/regexes for greater flexibility
         if any(path.startswith(prefix) for prefix in self.included):
-            return True
-        if any(path.startswith(prefix) for prefix in self.excluded):
             return False
-        return path.startswith(self.project_root)
+        if any(path.startswith(prefix) for prefix in self.excluded):
+            return True
+        return False
+
+    def is_inside_project(self, path):
+        path = os.path.abspath(path)
+        return path.startswith(self.project_root) and not self.is_excluded(path)
 
     @property
     def project_modules(self):
@@ -285,7 +289,7 @@ class GreenTypeAnalyzer(object):
                 for name in filenames:
                     abs_path = os.path.abspath(os.path.join(dirpath, name))
                     if not utils.is_python_source_module(abs_path) or \
-                            not self.is_project_file(abs_path):
+                            not self.is_inside_project(abs_path):
                         continue
                     self.index_module(abs_path)
 
@@ -303,7 +307,6 @@ class GreenTypeAnalyzer(object):
             loaded = self.indexes['MODULE_INDEX'].get(name)
             if loaded:
                 return loaded
-            module_indexed = SourceModuleIndexer(self, path).run()
         else:
             loaded = self.indexes['MODULE_INDEX'].get(name)
             if loaded:
@@ -313,7 +316,12 @@ class GreenTypeAnalyzer(object):
             except ValueError as e:
                 LOG.warning(e)
                 return None
-            module_indexed = SourceModuleIndexer(self, path).run()
+
+        if self.is_excluded(path):
+            LOG.debug('File %r is explicitly excluded from project', path)
+            return None
+
+        module_indexed = SourceModuleIndexer(self, path).run()
 
         if self.config['FOLLOW_IMPORTS']:
             for imp in module_indexed.imports:
@@ -557,6 +565,14 @@ class GreenTypeAnalyzer(object):
         parser.add_argument('--src-roots', type=lambda x: x.split(':'), default=[],
                             dest='SOURCE_ROOTS',
                             help='Sources roots separated by colon.')
+
+        parser.add_argument('--exclude', type=lambda x: x.split(':'), default=[],
+                            dest='EXCLUDE',
+                            help='Files excluded from indexing process.')
+
+        parser.add_argument('--include', type=lambda x: x.split(':'), default=[],
+                            dest='INCLUDE',
+                            help='Files included to indexing process.')
 
         parser.add_argument('-t', '--target', default='',
                             dest='TARGET_NAME',
