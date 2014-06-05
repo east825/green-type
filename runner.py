@@ -17,12 +17,19 @@ from greentype.compat import open
 PROJECT_ROOT = os.path.dirname(__file__)
 REPORTS_DIR = os.path.join(PROJECT_ROOT, 'reports')
 
-logging.basicConfig(level=logging.CRITICAL)
-LOG = logging.getLogger(__name__)
+file_handler = logging.FileHandler(
+    os.path.join(PROJECT_ROOT, 'greentype.log'),
+    mode='w'
+)
+file_handler.setFormatter(logging.Formatter(
+    fmt='%(asctime)s %(levelname)s: %(message)s',
+    datefmt='%H:%M:%S'
+))
+logging.getLogger('greentype.core').addHandler(file_handler)
 
 
 # def analyze_project(target_path, args):
-#     analyzer = core.GreenTypeAnalyzer(target_path=target_path)
+# analyzer = core.GreenTypeAnalyzer(target_path=target_path)
 #     analyzer.config.update_from_object(args)
 #
 #     if analyzer.config['ANALYZE_BUILTINS']:

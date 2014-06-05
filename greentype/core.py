@@ -11,7 +11,6 @@ from contextlib import contextmanager
 from collections import defaultdict
 import operator
 import os
-import random
 import sys
 import textwrap
 
@@ -36,6 +35,8 @@ CONFIG_NAME = '{}.cfg'.format(PROJECT_NAME)
 EXCLUDED_DIRECTORIES = frozenset(['.svn', 'CVS', '.bzr', '.hg', '.git', '__pycache__'])
 
 LOG = logging.getLogger(__name__)
+LOG.propagate = False
+LOG.setLevel(logging.DEBUG)
 
 
 # TODO: it's better to be Trie, views better to be immutable
@@ -166,6 +167,7 @@ class GreenTypeAnalyzer(object):
             'INCLUDE': [],
 
             'VERBOSE': False,
+            'QUIET': False,
             'ANALYZE_BUILTINS': True
         }
         if PY2:
@@ -272,8 +274,14 @@ class GreenTypeAnalyzer(object):
         for index in self.indexes.values():
             index.clear()
 
+    def report(self, msg, verbose=False):
+        if not self.config['QUIET']:
+            if not verbose or self.config['VERBOSE']:
+                print(msg)
+
+
     def index_project(self):
-        print('Indexing project {!r} starting from {!r}'.format(self.project_root,
+        self.report('Indexing project {!r} starting from {!r}'.format(self.project_root,
                                                                 self.target_path))
         if os.path.isfile(self.target_path):
             if not utils.is_python_source_module(self.target_path):
@@ -593,9 +601,14 @@ class GreenTypeAnalyzer(object):
         parser.add_argument('-d', '--dump-params', action='store_true',
                             help='Dump parameters qualified by target.')
 
-        parser.add_argument('-v', '--verbose', action='store_true',
-                            dest='VERBOSE',
+        parser.add_argument('-v', '--verbose', action='count', default=0,
+                            dest='verbose_level',
                             help='Enable verbose output.')
+
+        # TODO: detect piping
+        parser.add_argument('-q', '--quiet', action='store_true',
+                            dest='QUIET',
+                            help='Print only report in console.')
 
         parser.add_argument('--json', action='store_true',
                             help='Dump analysis results in JSON.')
@@ -604,8 +617,12 @@ class GreenTypeAnalyzer(object):
                             help='Path to single Python module or directory.')
 
         args = parser.parse_args()
-        if args.VERBOSE:
-            LOG.setLevel(logging.DEBUG)
+
+        if args.verbose_level > 1:
+            console = logging.StreamHandler()
+            console.setLevel(logging.INFO)
+            LOG.addHandler(console)
+        args.VERBOSE = args.verbose_level > 0
 
         analyzer = cls(os.path.abspath(os.path.expanduser(args.path)))
         analyzer.discover_project_config()
