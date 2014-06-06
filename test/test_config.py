@@ -12,7 +12,7 @@ def test_project_config():
 
     def project_path(analyzer, path):
         if not os.path.isabs(path):
-            return os.path.join(analyzer.project_root, path)
+            return os.path.normpath(os.path.join(analyzer.project_root, path))
         return path
 
     analyzer = TestAnalyzer('project/src1/module1.py')

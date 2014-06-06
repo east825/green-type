@@ -13,5 +13,8 @@ def check_strings(x, y):
 
     # PY2: unicode / str
     # PY3: str
+    y.upper()
+    # without call to upper() some *Encoder classes from _multibytecodec
+    # on Windows are matched as well
     y.encode()
 

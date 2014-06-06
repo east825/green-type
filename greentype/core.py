@@ -38,6 +38,7 @@ EXCLUDED_DIRECTORIES = frozenset(['.svn', 'CVS', '.bzr', '.hg', '.git', '__pycac
 LOG = logging.getLogger(__name__)
 LOG.propagate = False
 LOG.setLevel(logging.DEBUG)
+LOG.addHandler(logging.NullHandler())
 
 
 # TODO: it's better to be Trie, views better to be immutable
@@ -237,9 +238,8 @@ class GreenTypeAnalyzer(object):
         result = []
         for path in paths:
             if not os.path.isabs(path):
-                result.append(os.path.join(self.project_root, path))
-            else:
-                result.append(path)
+                path = os.path.join(self.project_root, path)
+            result.append(os.path.normpath(path))
         return result
 
     def is_excluded(self, path):
@@ -582,7 +582,7 @@ class GreenTypeAnalyzer(object):
             if os.path.exists(config_path):
                 LOG.info('Found config file at %r.', config_path)
                 self.config.update_from_cfg_file(config_path)
-                self.config['PROJECT_ROOT'] = os.path.dirname(os.path.abspath(config_path))
+                self.config['PROJECT_ROOT'] = os.path.dirname(config_path)
                 break
 
     @classmethod
