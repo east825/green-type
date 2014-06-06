@@ -38,23 +38,59 @@ _excluded_words = frozenset([
 _excluded_projects = frozenset([
     # mostly pictures
     'nvkelso/natural-earth-vector',
-    'somerandomdude/Iconic',
+
     # mostly text
     'CamDavidsonPilon/Probabilistic-Programming-and-Bayesian-Methods-for-Hackers',
     'karan/Projects',
-    'python-git/python',
     'mitsuhiko/rstblog',
     'redecentralize/alternative-internet',
     'kennethreitz/python-guide',
-    # doesn't have enough Python modules do analyze
+    'taobao/nginx-book',
+
+    # doesn't have enough Python modules to analyze
     'mattwilliamson/arduino-sms-alarm',
     'logsol/Github-Auto-Deploy.git',
     'jokkedk/webgrind',
     'square/SocketRocket',
+    'misfo/Shell-Turtlestein',
+    'jreese/spotify-gnome',
+    'fogleman/Minecraft',
+    'paulgb/simplediff',
+    'somerandomdude/Iconic',
+    'gleitz/howdoi',
+    'dominis/ansible-shell',
+
     # broken projects
     'Eichhoernchen/SiriServer',
     'Aaln/whit',
     'chen3feng/typhoon-blade',
+    'numenta/nupic', # has python template modules with $VAR placeholders
+    'gregmalcolm/python_koans', # has exercises both for Python 2 and Python 3
+    'surfly/gevent', # has Python 3 specific modules
+    'faif/python-patterns', # targeting Python 3
+
+    # too complex project structure
+    'edx/configuration',
+    'deis/deis',
+    'klen/python-mode',
+
+    # pretty much useless without dependencies
+    # or has too many of them
+    'mitmproxy/mitmproxy',
+    'shipyard/shipyard',
+    'thumbor/thumbor',
+    'hausdorff/snapchat-fs',
+    'slacy/minimongo',
+    'mongodb/mongo-python-driver',
+    'nvie/rq',
+    'aws/aws-cli',
+    'getsentry/sentry',
+    'eldarion/biblion',
+    'astanway/Commit-Logs-From-Last-Night',
+
+    # other
+    'python-git/python',
+    'iambus/xunlei-lixian',
 ])
 
 
