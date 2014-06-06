@@ -115,6 +115,7 @@ def run(*args):
         print(e, file=sys.stderr)
         if _failfast:
             sys.exit(1)
+        raise e
 
 
 def fetch_projects(args):
@@ -170,38 +171,54 @@ def collect_statistics(args):
         projects_directory = os.path.abspath(os.path.expanduser(args.directory))
         print('Running analysis in batch mode. Scanning directory {!r}.'.format(projects_directory))
 
-        if not os.path.exists(REPORTS_DIR):
+        reports_root = os.path.join(projects_directory, '.reports')
+        if not os.path.exists(reports_root):
             print('Reports directory does not exists yet. '
-                  'Creating one at {!r}.'.format(REPORTS_DIR))
-            os.makedirs(REPORTS_DIR)
+                  'Creating one at {!r}.'.format(reports_root))
+            os.makedirs(reports_root)
+
+        venv_root = os.path.join(projects_directory, '.venv')
+        if not os.path.exists(venv_root):
+            print('Virtual environments directory does not exists yet. '
+                  'Creating one at {!r}.'.format(venv_root))
+            os.makedirs(venv_root)
+
 
         project_reports = []
         for project_name in os.listdir(projects_directory):
             project_path = os.path.join(projects_directory, project_name)
+            if project_path in (venv_root, reports_root):
+                continue
+
             if os.path.isdir(project_path):
-                report_path = os.path.join(REPORTS_DIR, project_name + '.json')
+                report_path = os.path.join(reports_root, project_name + '.json')
                 if not args.force and os.path.exists(report_path):
                     print('Using existing JSON report for {}.'.format(project_name))
                 else:
-                    with cd(project_path):
-                        venv_path = os.path.join(project_path, 'env')
-                        if not os.path.exists('env'):
+                    try:
+                        venv_path = os.path.join(venv_root, 'env-' + project_name)
+                        if not os.path.exists(venv_path):
                             print('Creating virtualenv in {!r}.'.format(venv_path))
-                            run(VENV2_BIN, 'env')
+                            run(VENV2_BIN, venv_path)
 
-                        # TODO: correct paths for Windows
+                            # TODO: correct paths for Windows
                         venv_interpreter_bin = os.path.join(venv_path, 'bin/python')
-                        if os.path.exists('setup.py'):
-                            run(venv_interpreter_bin, 'setup.py', 'develop')
+
+                        with cd(project_path):
+                            if os.path.exists('setup.py'):
+                                try:
+                                    run(venv_interpreter_bin, 'setup.py', 'develop')
+                                except subprocess.CalledProcessError:
+                                    pass
 
                         with cd(PROJECT_ROOT):
-                            run(venv_interpreter_bin, 'setup.py', 'develop')
-
-                        venv_greentype_bin = os.path.join(venv_path, 'bin/greentype')
-                        run(venv_greentype_bin, '--quiet', '--json',
-                            '--exclude', 'env',
-                            '--output', report_path,
-                            project_path)
+                            run(venv_interpreter_bin, os.path.join(PROJECT_ROOT, 'runner.py'),
+                                '--json', '--follow-imports',
+                                '--output', report_path,
+                                project_path)
+                    except subprocess.CalledProcessError:
+                        print('Unrecoverable error in {}. Skipping.'.format(project_name))
+                        continue
 
                 with open(report_path, 'rb') as f:
                     report = json.load(f, encoding='utf-8')
@@ -244,6 +261,10 @@ def collect_statistics(args):
                 values.append(value)
                 value_sources[value] = report['project_root']
 
+            if not values:
+                print('No values exist for {}.'.format(path))
+                continue
+
             mean = sum(values) / len(values)
             if len(values) > 1:
                 variance = sum((x - mean) ** 2 for x in values) / (len(values) - 1)
@@ -278,7 +299,7 @@ def main():
     cmd_fetch_projects.set_defaults(func=fetch_projects)
 
     cmd_collect_statistics = commands.add_parser('collect-statistics')
-    cmd_collect_statistics.add_argument('directory', default='samples/github')
+    cmd_collect_statistics.add_argument('directory', nargs='?', default='samples/github')
     cmd_collect_statistics.add_argument('--force', action='store_true')
     cmd_collect_statistics.set_defaults(func=collect_statistics)
 

@@ -287,8 +287,9 @@ class GreenTypeAnalyzer(object):
 
 
     def index_project(self):
-        self.report('Indexing project {!r} starting from {!r}'.format(self.project_root,
+        self.report('Indexing project {!r} starting from {!r}.'.format(self.project_root,
                                                                 self.target_path))
+        LOG.debug('Python path: %r', sys.path)
         if os.path.isfile(self.target_path):
             if not utils.is_python_source_module(self.target_path):
                 raise ValueError('Not a valid Python module {!r} '
