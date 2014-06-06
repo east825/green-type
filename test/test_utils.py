@@ -1,3 +1,4 @@
+import os
 import platform
 import time
 import pytest
@@ -84,14 +85,17 @@ def test_parent_directories(tmpdir):
         return list(utils.parent_directories(start, stop, strict))
 
     # root corner-cases
-    if platform.system() == 'Linux':
-        assert parents('/', None, False) == ['/']
-        assert parents('/', None, True) == []
+    if platform.system() == 'Windows':
+        root_path = os.path.splitdrive(tmpdir.strpath)[0] + '\\'
+    else:
+        root_path = '/'
 
-        assert parents('/', '/', False) == []
-        assert parents('/', '/', True) == []
+    assert parents(root_path, None, False) == [root_path]
+    assert parents(root_path, None, True) == []
+    assert parents(root_path, root_path, False) == []
+    assert parents(root_path, root_path, True) == []
 
-    root_path = tmpdir.strpath
+    stop_at = tmpdir.strpath
     file = tmpdir.ensure('foo/bar/baz/file.txt')
     assert file.check()
 
@@ -101,12 +105,12 @@ def test_parent_directories(tmpdir):
     file_path = file.strpath
 
     # strict parameter doesn't matter when start is a file
-    assert parents(file_path, root_path, False) == [baz_path, bar_path, foo_path]
-    assert parents(file_path, root_path, True) == [baz_path, bar_path, foo_path]
+    assert parents(file_path, stop_at, False) == [baz_path, bar_path, foo_path]
+    assert parents(file_path, stop_at, True) == [baz_path, bar_path, foo_path]
 
     # but does when it's a directory
-    assert parents(baz_path, root_path, False) == [baz_path, bar_path, foo_path]
-    assert parents(baz_path, root_path, True) == [bar_path, foo_path]
+    assert parents(baz_path, stop_at, False) == [baz_path, bar_path, foo_path]
+    assert parents(baz_path, stop_at, True) == [bar_path, foo_path]
 
     # a couple of tests outside of temp dir
     assert list(utils.parent_directories(TEST_DATA_ROOT, TEST_ROOT, False)) == [TEST_DATA_ROOT]
