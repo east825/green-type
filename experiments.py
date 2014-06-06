@@ -9,6 +9,7 @@ import sys
 import operator
 import textwrap
 import traceback
+import platform
 from contextlib import contextmanager
 
 import requests
@@ -201,18 +202,20 @@ def collect_statistics(args):
                             print('Creating virtualenv in {!r}.'.format(venv_path))
                             run(VENV2_BIN, venv_path)
 
-                            # TODO: correct paths for Windows
-                        venv_interpreter_bin = os.path.join(venv_path, 'bin/python')
+                        if platform.system() == 'Windows':
+                            venv_interpreter = os.path.join(venv_path, 'Scripts', 'python')
+                        else:
+                            venv_interpreter = os.path.join(venv_path, 'bin', 'python')
 
                         with cd(project_path):
                             if os.path.exists('setup.py'):
                                 try:
-                                    run(venv_interpreter_bin, 'setup.py', 'develop')
+                                    run(venv_interpreter, 'setup.py', 'develop')
                                 except subprocess.CalledProcessError:
                                     pass
 
                         with cd(PROJECT_ROOT):
-                            run(venv_interpreter_bin, os.path.join(PROJECT_ROOT, 'runner.py'),
+                            run(venv_interpreter, os.path.join(PROJECT_ROOT, 'runner.py'),
                                 '--json', '--follow-imports',
                                 '--output', report_path,
                                 project_path)
