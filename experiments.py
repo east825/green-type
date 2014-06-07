@@ -21,6 +21,8 @@ REPORTS_DIR = os.path.join(PROJECT_ROOT, 'reports')
 PYTHON2_BIN, PYTHON3_BIN = 'python2', 'python3'
 VENV2_BIN, VENV3_BIN = 'venv2', 'venv3'
 
+BIN_DIR = 'Scripts' if platform.system() == 'Windows' else 'bin'
+
 sys.path.insert(0, PROJECT_ROOT)
 
 _failfast = False
@@ -65,10 +67,10 @@ _excluded_projects = frozenset([
     'Eichhoernchen/SiriServer',
     'Aaln/whit',
     'chen3feng/typhoon-blade',
-    'numenta/nupic', # has python template modules with $VAR placeholders
-    'gregmalcolm/python_koans', # has exercises both for Python 2 and Python 3
-    'surfly/gevent', # has Python 3 specific modules
-    'faif/python-patterns', # targeting Python 3
+    'numenta/nupic',  # has python template modules with $VAR placeholders
+    'gregmalcolm/python_koans',  # has exercises both for Python 2 and Python 3
+    'surfly/gevent',  # has Python 3 specific modules
+    'faif/python-patterns',  # targeting Python 3
 
     # too complex project structure
     'edx/configuration',
@@ -105,18 +107,18 @@ def cd(path):
         os.chdir(old_dir)
 
 
-def run(*args):
-    # parts = []
-    # for arg in args:
-    # parts.extend(shlex.split(arg))
-
+def run(*args, **kwargs):
+    stdout = kwargs.pop('stdout', sys.stdout)
+    stderr = kwargs.pop('stderr', subprocess.STDOUT)
+    ignore_errors = kwargs.pop('ignore_errors', False)
     try:
-        subprocess.check_call(args, stdout=sys.stdout, stderr=subprocess.STDOUT)
+        subprocess.check_call(args, stdout=stdout, stderr=stderr, **kwargs)
     except subprocess.CalledProcessError as e:
         print(e, file=sys.stderr)
         if _failfast:
             sys.exit(1)
-        raise e
+        if not ignore_errors:
+            raise e
 
 
 def fetch_projects(args):
@@ -184,7 +186,6 @@ def collect_statistics(args):
                   'Creating one at {!r}.'.format(venv_root))
             os.makedirs(venv_root)
 
-
         project_reports = []
         for project_name in os.listdir(projects_directory):
             project_path = os.path.join(projects_directory, project_name)
@@ -202,20 +203,19 @@ def collect_statistics(args):
                             print('Creating virtualenv in {!r}.'.format(venv_path))
                             run(VENV2_BIN, venv_path)
 
-                        if platform.system() == 'Windows':
-                            venv_interpreter = os.path.join(venv_path, 'Scripts', 'python')
-                        else:
-                            venv_interpreter = os.path.join(venv_path, 'bin', 'python')
+                        venv_python = os.path.join(venv_path, BIN_DIR, 'python')
+                        venv_pip = os.path.join(venv_path, BIN_DIR, 'pip')
 
                         with cd(project_path):
+                            if os.path.exists('requirements.txt'):
+                                run(venv_pip, 'install', '-r', 'requirements.txt',
+                                    ignore_errors=True)
+
                             if os.path.exists('setup.py'):
-                                try:
-                                    run(venv_interpreter, 'setup.py', 'develop')
-                                except subprocess.CalledProcessError:
-                                    pass
+                                run(venv_python, 'setup.py', 'develop', ignore_errors=True)
 
                         with cd(PROJECT_ROOT):
-                            run(venv_interpreter, os.path.join(PROJECT_ROOT, 'runner.py'),
+                            run(venv_python, os.path.join(PROJECT_ROOT, 'runner.py'),
                                 '--json', '--follow-imports',
                                 '--output', report_path,
                                 project_path)
