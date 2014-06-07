@@ -327,7 +327,7 @@ class GreenTypeAnalyzer(object):
         else:
             try:
                 path = self.module_name_to_path(name)
-            except ValueError as e:
+            except ValueError:
                 LOG.warning('Module %r is not found under source roots.', name)
                 self._broken_modules.add(name)
                 return None
@@ -388,12 +388,14 @@ class GreenTypeAnalyzer(object):
                     prepared = dir_name
                 else:
                     prepared, _ = os.path.splitext(relative)
+                # critical on Windows: foo.bar.py and foo.Bar.py are the same module
+                prepared = os.path.normcase(prepared)
                 return prepared.replace(os.path.sep, '.').strip('.')
         raise ValueError('Unresolved module: path={!r}'.format(path))
 
 
     def module_name_to_path(self, module_name):
-        rel_path = os.path.join(*module_name.split('.'))
+        rel_path = os.path.normcase(os.path.join(*module_name.split('.')))
         roots = self.source_roots + [p for p in sys.path if p not in ('', '.', os.getcwd())]
         for src_root in roots:
             path = os.path.join(src_root, rel_path)

@@ -41,6 +41,18 @@ def test_module_exclusion():
     assert 'excluded.included' in analyzer.indexes['MODULE_INDEX']
     assert 'excluded.included.module' in analyzer.indexes['MODULE_INDEX']
 
+# @pytest.mark.skipif(platform.system() != 'Windows')
+def test_case_insensitive_paths():
+    # This can happen on Windows only. Case insensitive file system
+    # can cause the same module to be included in indexes twice.
+    # See test data for details.
+    analyzer = conftest.TestAnalyzer('case_insensitive_paths')
+    analyzer.index_project()
+
+    assert 'package.Foo' not in analyzer.indexes['MODULE_INDEX']
+    assert 'package.Foo.Foo' not in analyzer.indexes['CLASS_INDEX']
+
+
 
 
 

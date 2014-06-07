@@ -14,7 +14,7 @@ TEST_DATA_ROOT = os.path.join(TEST_ROOT, 'test_data')
 class TestAnalyzer(core.GreenTypeAnalyzer):
     def __init__(self, target_path):
         super(TestAnalyzer, self).__init__(target_path)
-        self.config['FOLLOW_IMPORTS'] = False
+        self.config['FOLLOW_IMPORTS'] = True
         self._inferred_types = False
 
     def assert_resolved(self, target_module, local_name, real_name):
