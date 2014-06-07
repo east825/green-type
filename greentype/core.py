@@ -17,7 +17,7 @@ import textwrap
 from . import ast_utils
 from . import utils
 import traceback
-from .utils import memoized
+from .utils import memoized, MISSING
 from .compat import PY2, BUILTINS_NAME, indent, open
 
 
@@ -1107,26 +1107,9 @@ class StatisticsReport(object):
                               key=lambda x: len(x.suggested_types))
 
     def as_dict(self, with_samples=False, sample_size=20):
-        invisible = object()
-
-        def filter_invisible(obj):
-            if isinstance(obj, dict):
-                filtered = {}
-                for key, value in obj.items():
-                    if value is not invisible:
-                        filtered[key] = filter_invisible(value)
-                return filtered
-            elif isinstance(obj, list):
-                filtered = []
-                for item in obj:
-                    if item is not invisible:
-                        filtered.append(filter_invisible(item))
-                return filtered
-            return obj
-
         def sample(items):
             if not with_samples:
-                return invisible
+                return MISSING
 
             return list(items)[:sample_size]
 
@@ -1212,7 +1195,7 @@ class StatisticsReport(object):
             }
         }
 
-        return filter_invisible(d)
+        return utils.deep_filter(lambda x: x is not MISSING, d)
 
     def format_json(self, with_samples=False, sample_size=20, expand_definitions=True):
         class Dumper(json.JSONEncoder):

@@ -1,18 +1,29 @@
 import functools
 
 
+class _Missing(object):
+    def __str__(self):
+        return '<missing>'
+
+    def __repr__(self):
+        return str(self)
+
+
+MISSING = _Missing()
+
+
 def memoized(f):
     results = {}
-    missing = object()
 
     @functools.wraps(f)
     def wrapper(*args):
-        r = results.get(args, missing)
-        if r is missing:
+        r = results.get(args, MISSING)
+        if r is MISSING:
             r = results[args] = f(*args)
         return r
 
     return wrapper
+
 
 def dict_merge(d1, d2, add_new=True, override=False, override_none=False, silent=False):
     # TODO: cycles detection
@@ -40,3 +51,21 @@ def dict_merge(d1, d2, add_new=True, override=False, override_none=False, silent
             raise ValueError("Cannot merge values: key={!r},"
                              "values={!r} and {!r}".format(d1[key], value, key))
     return copy
+
+
+def deep_filter(func, d):
+    if func is None:
+        func = lambda x: x is not None
+
+    def helper(obj):
+        if isinstance(obj, dict):
+            return {k: helper(v) for k, v in obj.items() if func(v)}
+        elif isinstance(obj, list):
+            return [helper(v) for v in obj if func(v)]
+        elif isinstance(obj, set):
+            return {helper(v) for v in obj if func(v)}
+        elif isinstance(obj, frozenset):
+            return frozenset(helper(v) for v in obj if func(v))
+        return obj
+
+    return helper(d)

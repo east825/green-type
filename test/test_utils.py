@@ -150,5 +150,20 @@ def test_dict_merge():
         utils.dict_merge({'foo': 42}, {'foo': ()})
 
 
+def test_deep_filter():
+    assert utils.deep_filter(lambda x: not isinstance(x, list) or x, {
+        'foo': [],
+        'bar': ['baz', []]
+    }) == {'bar': ['baz']}
+
+    assert utils.deep_filter(lambda x: x is not utils.MISSING, {
+        'foo': utils.MISSING,
+        'bar': [None, 42, 'spam', utils.MISSING],
+        'baz': {utils.MISSING},
+        'quux': frozenset([utils.MISSING, utils.MISSING, frozenset([utils.MISSING])])
+    }) == {'bar': [None, 42, 'spam'], 'baz': set(), 'quux': frozenset([frozenset()])}
+
+    assert utils.deep_filter(None, {'foo': None, 'bar': [None, None, 42]}) == {'bar': [42]}
+
 
 
