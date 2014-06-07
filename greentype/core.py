@@ -288,7 +288,7 @@ class GreenTypeAnalyzer(object):
 
     def index_project(self):
         self.report('Indexing project {!r} starting from {!r}.'.format(self.project_root,
-                                                                self.target_path))
+                                                                       self.target_path))
         LOG.debug('Python path: %r', sys.path)
         if os.path.isfile(self.target_path):
             if not utils.is_python_source_module(self.target_path):
@@ -373,14 +373,9 @@ class GreenTypeAnalyzer(object):
         for src_root in roots:
             if path.startswith(src_root):
                 # check that on all way up to module correct packages with __init__ exist
-                in_proper_package = True
                 relative = os.path.relpath(path, src_root)
-                for dir in utils.parent_directories(path, src_root):
-                    if not os.path.exists(os.path.join(dir, '__init__.py')):
-                        in_proper_package = False
-                        break
-
-                if not in_proper_package:
+                if not all(os.path.exists(os.path.join(dir, '__init__.py'))
+                           for dir in utils.parent_directories(path, src_root)):
                     continue
 
                 dir_name, base_name = os.path.split(relative)
@@ -400,11 +395,18 @@ class GreenTypeAnalyzer(object):
         for src_root in roots:
             path = os.path.join(src_root, rel_path)
             package_path = os.path.join(path, '__init__.py')
-            if os.path.isfile(package_path):
-                return package_path
             module_path = path + '.py'
-            if os.path.isfile(module_path):
-                return os.path.abspath(module_path)
+            if os.path.isfile(package_path):
+                path = package_path
+            elif os.path.isfile(module_path):
+                path = module_path
+            else:
+                continue
+
+            if all(os.path.exists(os.path.join(dir, '__init__.py'))
+                   for dir in utils.parent_directories(path, src_root)):
+                return path
+
         raise ValueError('Unresolved module: name={!r}'.format(module_name))
 
 

@@ -1,7 +1,9 @@
 from conftest import *
 
 from greentype.compat import BUILTINS_NAME
+
 TEST_DATA_DIR = 'resolve'
+
 
 def test_no_import(analyzer):
     with analyzer.roots('local/no_import/'):
@@ -47,9 +49,11 @@ def test_import_from_relative_star(analyzer):
     with analyzer.roots('local/import_from/relative/import_star'):
         analyzer.assert_resolved('p1/p2/main.py', 'B', 'p1.module.B')
 
+
 def test_import_chain(analyzer):
     with analyzer.roots('local/import_chain'):
         analyzer.assert_resolved('main.py', 'alias.A.Inner', 'package.module.MyClass.Inner')
+
 
 def test_import_chain2(analyzer):
     with analyzer.roots('local/import_chain2'):
@@ -58,10 +62,10 @@ def test_import_chain2(analyzer):
 
 def test_path_to_module(analyzer):
     with analyzer.roots('roots',
-                       'roots/a',
-                       'roots/a/b',
-                       'roots/a/b/package',
-                       'roots/a/b/package/subpackage'):
+                        'roots/a',
+                        'roots/a/b',
+                        'roots/a/b/package',
+                        'roots/a/b/package/subpackage'):
         m1 = analyzer.index_module('a/b/package/subpackage/module.py')
         assert m1 is not None
         assert m1.qname == 'package.subpackage.module'
@@ -69,8 +73,12 @@ def test_path_to_module(analyzer):
         with pytest.raises(ValueError):
             analyzer.path_to_module_name('a/b/package/dir/module.py')
 
+        with pytest.raises(ValueError):
+            analyzer.module_name_to_path('a.b.package.dir.module')
+
         m2 = analyzer.index_module('a/b/package/dir/module.py')
         assert m2 is None
+
 
 def test_same_name_bases_skipped(analyzer):
     analyzer.index_module('same_name_bases.py')
