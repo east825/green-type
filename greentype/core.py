@@ -616,6 +616,9 @@ class GreenTypeAnalyzer(object):
                             dest='ANALYZE_BUILTINS',
                             help='Not analyze built-in modules reflectively first.')
 
+        parser.add_argument('--with-samples', action='store_true',
+                            help='Include samples in report.')
+
         parser.add_argument('-d', '--dump-params', action='store_true',
                             help='Dump parameters qualified by target.')
 
@@ -660,9 +663,10 @@ class GreenTypeAnalyzer(object):
         statistics = analyzer.statistics_report()
         with args.output as f:
             if args.json:
-                f.write((statistics.format_json(with_samples=True)))
+                f.write(statistics.format_json(with_samples=args.with_samples))
             else:
-                f.write(statistics.format_text(dump_params=args.dump_params))
+                f.write(statistics.format_text(with_samples=args.with_samples,
+                                               dump_params=args.dump_params))
 
 
 class Definition(object):
@@ -1218,7 +1222,7 @@ class StatisticsReport(object):
                         return {
                             'qualified_name': o.qname,
                             'accessed_attributes': list(o.attributes),
-                            'suggested_classes': list(o.suggested_types)
+                            'suggested_classes': [cls.qname for cls in o.suggested_types]
                         }
                     elif isinstance(o, ClassDef):
                         return {
@@ -1339,8 +1343,7 @@ class StatisticsReport(object):
         return self.format_text()
 
     def __repr__(self):
-        preferences = ', '.join('{}={}'.format(k, v) for k, v in vars(self).items())
-        return 'Statistic({})'.format(preferences)
+        return 'Statistic(project={!r})'.format(self.analyzer.project_root)
 
     def _format_list(self, items, header=None, prefix_func=None, indentation='  '):
         formatted = '\n'
