@@ -28,11 +28,13 @@ class TestAnalyzer(core.GreenTypeAnalyzer):
         super(TestAnalyzer, self).invalidate_indexes()
         self._inferred_types = False
 
+    def infer_parameter_types(self):
+        super(TestAnalyzer, self).infer_parameter_types()
+        self._inferred_types = True
 
     def assert_inferred(self, param_name, class_names):
         if not self._inferred_types:
             self.infer_parameter_types()
-            self._inferred_types = True
 
         param = self.indexes['PARAMETER_INDEX'][param_name]
         assert set(class_names) == set(c.qname for c in param.suggested_types)

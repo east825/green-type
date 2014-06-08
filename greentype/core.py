@@ -547,9 +547,7 @@ class GreenTypeAnalyzer(object):
             return functools.reduce(set.union, sets, set())
 
         def intersect(sets):
-            if not sets:
-                return set()
-            return functools.reduce(set.intersection, sets)
+            return functools.reduce(set.intersection, sets) if sets else set()
 
         # More fair algorithm because it considers newly discovered bases classes as well
         index = self.indexes['CLASS_ATTRIBUTE_INDEX']
@@ -567,11 +565,15 @@ class GreenTypeAnalyzer(object):
             available_attrs = unite(b.attributes for b in bases) | candidate.attributes
             if accessed_attrs <= available_attrs:
                 suitable.add(candidate)
-            for base in bases:
-                if base in checked:
-                    continue
-                if any(attr in base.attributes for attr in accessed_attrs):
-                    candidates.add(base)
+
+            # new classes could be added to index during call to _resolve_bases(),
+            # so we have to check them as well
+            if not self.config['FOLLOW_IMPORTS']:
+                for base in bases:
+                    if base in checked:
+                        continue
+                    if any(attr in base.attributes for attr in accessed_attrs):
+                        candidates.add(base)
 
         # remove subclasses if their superclasses is suitable also
         for cls in suitable.copy():

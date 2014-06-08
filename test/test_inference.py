@@ -56,3 +56,15 @@ def test_diamonds():
     check('diamond_siblings', {'diamond_siblings.B', 'diamond_siblings.C'})
     check('diamond_left', {'diamond_left.B'})
     check('diamond_disjointed', {'diamond_disjointed.B', 'diamond_disjointed.D'})
+
+
+def test_following_imports_during_inferring():
+    analyzer = conftest.TestAnalyzer('following_imports/main.py')
+    analyzer.config['FOLLOW_IMPORTS'] = True
+    analyzer.index_project()
+    analyzer.assert_inferred('main.func.x', {'sibling.SuperClass'})
+
+    analyzer = conftest.TestAnalyzer('following_imports/main.py')
+    analyzer.config['FOLLOW_IMPORTS'] = False
+    analyzer.index_project()
+    analyzer.assert_inferred('main.func.x', {'sibling.SuperClass'})
