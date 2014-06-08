@@ -16,6 +16,7 @@ import textwrap
 
 from . import ast_utils
 from . import utils
+import timeit
 import traceback
 from .utils import memoized, MISSING
 from .compat import PY2, BUILTINS_NAME, indent, open
@@ -628,7 +629,7 @@ class GreenTypeAnalyzer(object):
                             dest='verbose_level',
                             help='Enable verbose output.')
 
-        parser.add_argument('-o', '--output', type=argparse.FileType(mode='wb'), default='-',
+        parser.add_argument('-o', '--output', type=argparse.FileType(mode='w'), default='-',
                             help='File, where to write report.')
 
         # TODO: detect piping
@@ -659,16 +660,20 @@ class GreenTypeAnalyzer(object):
 
         analyzer.index_project()
 
-        # with utils.timed('Inferred types for parameters'):
+        start = timeit.default_timer()
         analyzer.infer_parameter_types()
+        analyzer.report('Inferred types for parameters in '
+                        '{:.2f}'.format(timeit.default_timer() - start))
 
         statistics = analyzer.statistics_report()
+        LOG.info('Writing report to "%s"', args.output.name)
         with args.output as f:
             if args.json:
-                f.write(statistics.format_json(with_samples=args.with_samples))
+                report = statistics.format_json(with_samples=args.with_samples)
             else:
-                f.write(statistics.format_text(with_samples=args.with_samples,
-                                               dump_params=args.dump_params))
+                report = statistics.format_text(with_samples=args.with_samples,
+                                                dump_params=args.dump_params)
+            f.write(report)
 
 
 class Definition(object):
@@ -1247,11 +1252,12 @@ class StatisticsReport(object):
             d['indexed']['in_project']['functions'],
             d['indexed']['in_project']['parameters'])
 
-        formatted += self._format_list(
-            header='Most frequently accessed parameters (top {}):'.format(samples_size),
-            items=d['project_statistics']['parameters']['accessed_attributes']['top'],
-            prefix_func=lambda x: '{:3} attributes'.format(len(x.attributes))
-        )
+        if with_samples:
+            formatted += self._format_list(
+                header='Most frequently accessed parameters (top {}):'.format(samples_size),
+                items=d['project_statistics']['parameters']['accessed_attributes']['top'],
+                prefix_func=lambda x: '{:3} attributes'.format(len(x.attributes))
+            )
 
         stat = d['project_statistics']['parameters']
         formatted += textwrap.dedent("""
@@ -1276,29 +1282,30 @@ class StatisticsReport(object):
             stat['scattered_type']['total'], stat['scattered_type']['rate']
         ))
 
-        formatted += self._format_list(
-            header='Parameters with scattered type (top {}):'.format(samples_size),
-            items=stat['scattered_type']['sample'],
-            prefix_func=lambda x: '{:3} types'.format(len(x.suggested_types))
-        )
+        if with_samples:
+            formatted += self._format_list(
+                header='Parameters with scattered type (top {}):'.format(samples_size),
+                items=stat['scattered_type']['sample'],
+                prefix_func=lambda x: '{:3} types'.format(len(x.suggested_types))
+            )
 
-        formatted += self._format_list(
-            header='Parameters with accessed attributes, '
-                   'but with no suggested classes (first {})'.format(samples_size),
-            items=stat['undefined_type']['sample']
-        )
+            formatted += self._format_list(
+                header='Parameters with accessed attributes, '
+                       'but with no suggested classes (first {})'.format(samples_size),
+                items=stat['undefined_type']['sample']
+            )
 
-        formatted += self._format_list(
-            header='Parameters that have no attributes and not used directly '
-                   'elsewhere (first {})'.format(samples_size),
-            items=stat['attributeless']['usages']['unused']['sample']
-        )
+            formatted += self._format_list(
+                header='Parameters that have no attributes and not used directly '
+                       'elsewhere (first {})'.format(samples_size),
+                items=stat['attributeless']['usages']['unused']['sample']
+            )
 
-        formatted += self._format_list(
-            header='Parameters with definitively inferred types '
-                   '(first {})'.format(samples_size),
-            items=stat['exact_type']['sample'],
-        )
+            formatted += self._format_list(
+                header='Parameters with definitively inferred types '
+                       '(first {})'.format(samples_size),
+                items=stat['exact_type']['sample'],
+            )
 
         if dump_classes:
             classes = self._filter_name_prefix(self.project_classes)
@@ -1322,6 +1329,11 @@ class StatisticsReport(object):
                            param.used_as_operand,
                            param.returned)))
             formatted += self._format_list(header='Parameters', items=chunks)
+
+        formatted += self._format_list(
+            header='Additional statistics',
+            items=('{}: {}'.format(k, v.value()) for k, v in self.analyzer.statistics.items())
+        )
         return formatted
 
     def __str__(self):
