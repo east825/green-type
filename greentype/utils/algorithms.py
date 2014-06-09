@@ -22,6 +22,7 @@ def memoized(f):
             r = results[args] = f(*args)
         return r
 
+    wrapper.clear_results = results.clear
     return wrapper
 
 

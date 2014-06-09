@@ -39,6 +39,8 @@ def test_project_config():
     assert not analyzer.is_inside_project('project/excluded/module.py')
     assert not analyzer.is_inside_project('project/excluded')
 
+    assert analyzer.config['BUILTINS'][-2:] == ['audioop', 'ssl']
+
 
 def test_config_merging():
     conf = Config({

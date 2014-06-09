@@ -48,6 +48,25 @@ def test_qname():
     assert utils.qname_split('foo') == (None, 'foo')
     assert utils.qname_split('') == (None, '')
 
+def test_memoized():
+    @utils.memoized
+    def func(n):
+        func.called += 1
+
+    func.called = 0
+
+    func(1)
+    func(2)
+    func(2)
+    assert func.called == 2
+
+    func.clear_results()
+
+    func(1)
+    func(2)
+    assert func.called == 4
+
+
 
 def test_timed(capsys):
     # use case #1: decorator with custom message
