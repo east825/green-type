@@ -1194,7 +1194,8 @@ class StatisticsReport(object):
                     ),
                     'scattered_type': rate(
                         items=self.scattered_type_parameters,
-                        population=self.project_parameters
+                        population=self.project_parameters,
+                        sample_items=self.most_types_parameters(sample_size)
                     )
                 },
                 'additional': {name: unit.as_dict() for name, unit in
@@ -1237,7 +1238,7 @@ class StatisticsReport(object):
 
     def format_text(self, with_samples=True, samples_size=20, dump_classes=False,
                     dump_functions=False, dump_params=False):
-        d = self.as_dict(with_samples=with_samples)
+        d = self.as_dict(with_samples, samples_size)
         formatted = '\nTotal indexed: ' \
                     '{} classes, ' \
                     '{} functions with {} parameters'.format(
@@ -1291,19 +1292,19 @@ class StatisticsReport(object):
 
             formatted += self._format_list(
                 header='Parameters with accessed attributes, '
-                       'but with no suggested classes (first {})'.format(samples_size),
+                       'but with no suggested classes (first {}):'.format(samples_size),
                 items=stat['undefined_type']['sample']
             )
 
             formatted += self._format_list(
                 header='Parameters that have no attributes and not used directly '
-                       'elsewhere (first {})'.format(samples_size),
+                       'elsewhere (first {}):'.format(samples_size),
                 items=stat['attributeless']['usages']['unused']['sample']
             )
 
             formatted += self._format_list(
                 header='Parameters with definitively inferred types '
-                       '(first {})'.format(samples_size),
+                       '(first {}):'.format(samples_size),
                 items=stat['exact_type']['sample'],
             )
 
