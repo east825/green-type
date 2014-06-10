@@ -1,4 +1,5 @@
 from __future__ import division
+import pytest
 
 TEST_DATA_DIR = 'statistics'
 
@@ -34,62 +35,55 @@ def test_usages(analyzer):
     assert x3.returned == 0
 
 
+# @pytest.mark.xfail(reason='New statistics collected.')
 def test_dict_report_format(analyzer):
     analyzer.config['PROJECT_NAME'] = 'report.py'
     analyzer.index_module('report.py')
     analyzer.infer_parameter_types()
     report = analyzer.statistics_report().as_dict(with_samples=False)
-    assert report == {
-        "indexed": {
-            "total": {
-                "functions": 2,
-                "classes": 2,
-                "modules": 1,
-                "parameters": 5
-            },
-            "in_project": {
-                "functions": 2,
-                "classes": 2,
-                "modules": 1,
-                "parameters": 5
+
+    assert report["project_root"] == analyzer.project_root
+    assert report["project_name"] == "report.py"
+
+    assert report["indexed"] == {
+        "total": {
+            "functions": 2,
+            "classes": 2,
+            "modules": 1,
+            "parameters": 5
+        },
+        "in_project": {
+            "functions": 2,
+            "classes": 2,
+            "modules": 1,
+            "parameters": 5
+        }
+    }
+    assert report["project_statistics"]['parameters'] == {
+        "attributeless": {
+            "rate": 4 / 5,
+            "total": 4,
+            "usages": {
+                "operand": {
+                    "rate": 1 / 4,
+                    "total": 1
+                },
+                "unused": {
+                    "rate": 1 / 4,
+                    "total": 1
+                },
+                "argument": {
+                    "rate": 1 / 4,
+                    "total": 1
+                },
+                "returned": {
+                    "rate": 1 / 4,
+                    "total": 1
+                }
             }
         },
-        "project_statistics": {
-            "parameters": {
-                "attributeless": {
-                    "rate": 4 / 5,
-                    "total": 4,
-                    "usages": {
-                        "operand": {
-                            "rate": 1 / 4,
-                            "total": 1
-                        },
-                        "unused": {
-                            "rate": 1 / 4,
-                            "total": 1
-                        },
-                        "argument": {
-                            "rate": 1 / 4,
-                            "total": 1
-                        },
-                        "returned": {
-                            "rate": 1 / 4,
-                            "total": 1
-                        }
-                    }
-                },
-                "accessed_attributes": {"max": 2},
-                "scattered_type": {"rate": 0, "total": 0},
-                "exact_type": {"rate": 1 / 5, "total": 1},
-                "undefined_type": {"rate": 0, "total": 0}
-            },
-            "additional": {
-                "max_bases": {
-                    "max": 1, # object is unresolved
-                    "data": "report.SubClass"
-                }
-            },
-        },
-        "project_root": analyzer.project_root,
-        "project_name": "report.py"
+        "accessed_attributes": {"max": 2},
+        "scattered_type": {"rate": 0, "total": 0},
+        "exact_type": {"rate": 1 / 5, "total": 1},
+        "undefined_type": {"rate": 0, "total": 0}
     }

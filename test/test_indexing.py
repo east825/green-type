@@ -41,7 +41,7 @@ def test_module_exclusion():
     assert 'excluded.included' in analyzer.indexes['MODULE_INDEX']
     assert 'excluded.included.module' in analyzer.indexes['MODULE_INDEX']
 
-# @pytest.mark.skipif(platform.system() != 'Windows')
+# @pytest.mark.skipif(platform.system() != 'Windows', reason='Windows filesystem required.')
 def test_case_insensitive_paths():
     # This can happen on Windows only. Case insensitive file system
     # can cause the same module to be included in indexes twice.
