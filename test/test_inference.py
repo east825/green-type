@@ -1,5 +1,6 @@
 import os
 import conftest
+from greentype import core
 from greentype.utils import PY2
 from greentype.compat import BUILTINS_NAME
 
@@ -68,3 +69,28 @@ def test_following_imports_during_inferring():
     analyzer.config['FOLLOW_IMPORTS'] = False
     analyzer.index_project()
     analyzer.assert_inferred('main.func.x', {'sibling.SuperClass'})
+
+
+def test_object_attributes(analyzer):
+    analyzer.index_builtins()
+    analyzer.index_module('object_attributes.py')
+
+    class_index = analyzer.indexes['CLASS_INDEX']
+    attributes_index = analyzer.indexes['CLASS_ATTRIBUTE_INDEX']
+
+    true_object = class_index[BUILTINS_NAME + '.object']
+    user_class = class_index['object_attributes.Class']
+
+    if not PY2:
+        assert attributes_index['__doc__'] == {true_object}
+        assert attributes_index['__init__'] == {true_object}
+        assert user_class.attributes == {'foo'}
+    else:
+        assert attributes_index['__doc__'] == {core.PY2_FAKE_OBJECT, true_object}
+        assert attributes_index['__init__'] >= {true_object, user_class}
+        assert user_class.attributes == {'foo', '__init__'}
+
+    analyzer.assert_inferred('object_attributes.func.x', {'object_attributes.Class'})
+
+
+

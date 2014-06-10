@@ -164,6 +164,8 @@ class GreenTypeAnalyzer(object):
             'PARAMETER_INDEX': Index(None),
             'CLASS_ATTRIBUTE_INDEX': Index(set)
         }
+        if PY2:
+            self.register_class(PY2_FAKE_OBJECT)
 
         self.config = Config(defaults, PROJECT_NAME)
         target_path = os.path.abspath(target_path)
@@ -327,7 +329,7 @@ class GreenTypeAnalyzer(object):
         except SyntaxError as e:
             self.report_error('Syntax error during indexing of {!r}. '
                               'Wrong Python version?'.format(path))
-            LOG.error(traceback.format_exc(e))
+            LOG.error(traceback.format_exc())
             self._broken_modules.add(path)
             return None
 
@@ -582,8 +584,11 @@ class GreenTypeAnalyzer(object):
     def register_class(self, class_def):
         self.indexes['CLASS_INDEX'][class_def.qname] = class_def
 
-        if class_def.qname != BUILTINS_NAME + '.object':
-            class_def.attributes -= {'__init__', '__doc__'}
+        if class_def.qname not in (BUILTINS_NAME + '.object', PY2_FAKE_OBJECT.qname):
+            class_def.attributes -= {'__doc__'}
+            # safe only on Python 3
+            if not PY2:
+                class_def.attributes.discard('__init__')
 
         for attr in class_def.attributes:
             self.indexes['CLASS_ATTRIBUTE_INDEX'][attr].add(class_def)
@@ -745,6 +750,9 @@ class ClassDef(Definition):
 
     def __str__(self):
         return 'class {}({})'.format(self.qname, ', '.join(self.bases))
+
+
+PY2_FAKE_OBJECT = ClassDef('PY2_FAKE_OBJECT', None, None, (), {'__doc__', '__module__'})
 
 
 class FunctionDef(Definition):
@@ -973,6 +981,12 @@ class SourceModuleIndexer(ast.NodeVisitor):
     def class_discovered(self, node):
         class_name = self.qualified_name(node)
         bases_names = []
+        if not node.bases:
+            if PY2:
+                bases_names.append(PY2_FAKE_OBJECT.qname)
+            else:
+                bases_names.append(BUILTINS_NAME + '.object')
+
         for expr in node.bases:
             base_name = ast_utils.attributes_chain_to_name(expr)
             if base_name is None:
