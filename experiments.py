@@ -251,7 +251,11 @@ def collect_statistics(args):
             ('Scattered type parameters',
              'project_statistics.parameters.scattered_type.rate'),
             ('Maximum number of base classes',
-             'project_statistics.additional.max_bases.max'),
+             'project_statistics.additional.class_bases.max'),
+            ('Maximum number of classes having at least one attribute of used',
+             'project_statistics.additional.total_candidates.max'),
+            ('Average number of classes having at least one attribute of used',
+             'project_statistics.additional.total_candidates.mean')
         ]
 
         for title, path in metrics:

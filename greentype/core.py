@@ -18,6 +18,7 @@ from . import ast_utils
 from . import utils
 import timeit
 import traceback
+import itertools
 from .utils import memoized, MISSING
 from .compat import PY2, BUILTINS_NAME, indent, open
 
@@ -58,63 +59,43 @@ class Index(defaultdict):
 
 
 class StatisticUnit(object):
-    __slots__ = ('_min', '_max', '_items', '_counter', '_data')
+    __slots__ = ('_items', '_counter')
 
     def __init__(self):
-        self._min = None
-        self._max = None
-        self._data = None
-        self._items = None
-        self._counter = None
+        self._counter = itertools.count()
+        # tie breaker if item metadata doesn't support comparison
+        self._items = []
 
-    def update(self, collection):
-        if self._items is None:
-            self._items = set()
-        self._items.update(collection)
+    def add(self, item, meta_data=None):
+        self._items.append((item, next(self._counter), meta_data))
 
-    def add(self, *items):
-        if self._items is None:
-            self._items = set()
-        self._items.add(*items)
+    def min(self, key=lambda x: x):
+        item, _, meta = min(self._items, key=lambda x: key(x[0]))
+        return item, meta
 
-    def inc(self, value=1):
-        if self._counter is None:
-            self._counter = 0
-        self._counter += value
+    def max(self, key=lambda x: x):
+        item, _, meta = max(self._items, key=lambda x: key(x[0]))
+        return item, meta
 
-    def set_max(self, value, data=None):
-        if self._max is None:
-            self._max = value
-        else:
-            self._max = max(self._max, value)
-        if self._max == value:
-            self._data = data
+    def mean(self):
+        return sum(item[0] for item in self._items) / len(self._items)
 
-    def set_min(self, value, data=None):
-        if self._min is None:
-            self._min = value
-        else:
-            self._min = min(self._min, value)
-        if self._min == value:
-            self._data = data
-
-    def __iadd__(self, other):
-        self.inc(other)
-
-    def as_dict(self, skip_none=True):
+    def as_dict(self):
         d = {}
-        for name in self.__slots__:
-            attr = getattr(self, name)
-            if attr is None and skip_none:
-                continue
-            d[name.strip('_')] = attr
+        d['min'], d['min_meta'] = self.min()
+        d['max'], d['max_meta'] = self.max()
+        d['mean'] = self.mean()
         return d
 
-    def value(self):
-        for name in self.__slots__:
-            attr = getattr(self, name)
-            if attr is not None:
-                return attr
+    def __str__(self):
+        min_item, min_meta = self.min()
+        max_item, max_meta = self.max()
+        return 'min={} ({}) ' \
+               'max={} ({}) ' \
+               'mean={}'.format(min_item, min_meta, max_item, max_meta, self.mean())
+
+    def __repr__(self):
+        return str(self)
 
 
 class Config(UserDict):
@@ -540,7 +521,9 @@ class GreenTypeAnalyzer(object):
 
     def infer_parameter_types(self):
         for param in self.project_parameters:
-            param.suggested_types = self.suggest_classes(param.attributes)
+            if param.attributes:
+                param.suggested_types = self.suggest_classes(param.attributes)
+            # self._resolve_bases.clear_results()
 
 
     def suggest_classes(self, accessed_attrs):
@@ -553,15 +536,20 @@ class GreenTypeAnalyzer(object):
         # More fair algorithm because it considers newly discovered bases classes as well
         index = self.indexes['CLASS_ATTRIBUTE_INDEX']
         candidates = unite(index[attr] for attr in accessed_attrs)
+
+        self.statistics['initial_candidates'].add(len(candidates), list(accessed_attrs))
+
         suitable = set()
         checked = set()
+        total = 0
         while candidates:
             candidate = candidates.pop()
+            total += 1
             checked.add(candidate)
             bases = self._resolve_bases(candidate)
 
             # register number of base classes for statistics
-            self.statistics['max_bases'].set_max(len(bases), candidate.qname)
+            self.statistics['class_bases'].add(len(bases), candidate.qname)
 
             available_attrs = unite(b.attributes for b in bases) | candidate.attributes
             if accessed_attrs <= available_attrs:
@@ -575,6 +563,8 @@ class GreenTypeAnalyzer(object):
                         continue
                     if any(attr in base.attributes for attr in accessed_attrs):
                         candidates.add(base)
+
+        self.statistics['total_candidates'].add(total, list(accessed_attrs))
 
         # remove subclasses if their superclasses is suitable also
         for cls in suitable.copy():
@@ -1332,8 +1322,8 @@ class StatisticsReport(object):
             formatted += self._format_list(header='Parameters', items=chunks)
 
         formatted += self._format_list(
-            header='Additional statistics',
-            items=('{}: {}'.format(k, v.value()) for k, v in self.analyzer.statistics.items())
+            header='Additional statistics:',
+            items=('{}: {}'.format(k, str(v)) for k, v in self.analyzer.statistics.items())
         )
         return formatted
 
