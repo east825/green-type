@@ -406,10 +406,7 @@ class GreenTypeAnalyzer(object):
                     class_name = module_name + '.' + object_name(cls)
                     bases = tuple(object_name(b) for b in cls.__bases__)
                     attributes = set(vars(cls))
-                    class_def = ClassDef(class_name, None, None, bases, attributes)
-                    self.indexes['CLASS_INDEX'][class_name] = class_def
-                    for attr in attributes:
-                        self.indexes['CLASS_ATTRIBUTE_INDEX'][attr].add(class_def)
+                    self.register_class(ClassDef(class_name, None, None, bases, attributes))
 
     @memoized
     def resolve_name(self, name, module, type='class'):
@@ -523,7 +520,7 @@ class GreenTypeAnalyzer(object):
         for param in self.project_parameters:
             if param.attributes:
                 param.suggested_types = self.suggest_classes(param.attributes)
-            # self._resolve_bases.clear_results()
+                # self._resolve_bases.clear_results()
 
 
     def suggest_classes(self, accessed_attrs):
@@ -581,6 +578,23 @@ class GreenTypeAnalyzer(object):
                 self.config.update_from_cfg_file(config_path)
                 self.config['PROJECT_ROOT'] = os.path.dirname(config_path)
                 break
+
+    def register_class(self, class_def):
+        self.indexes['CLASS_INDEX'][class_def.qname] = class_def
+
+        if class_def.qname != BUILTINS_NAME + '.object':
+            class_def.attributes -= {'__init__', '__doc__'}
+
+        for attr in class_def.attributes:
+            self.indexes['CLASS_ATTRIBUTE_INDEX'][attr].add(class_def)
+
+    def register_function(self, func_def):
+        self.indexes['FUNCTION_INDEX'][func_def.qname] = func_def
+        for param_def in func_def.parameters:
+            self.indexes['PARAMETER_INDEX'][param_def.qname] = param_def
+
+    def register_module(self, module_def):
+        self.indexes['MODULE_INDEX'][module_def.qname] = module_def
 
     @classmethod
     def main(cls):
@@ -859,28 +873,12 @@ class SourceModuleIndexer(ast.NodeVisitor):
         self.depth = 0
         self.root = None
 
-    def register_class(self, class_def):
-        self.indexes['CLASS_INDEX'][class_def.qname] = class_def
-        for attr in self.collect_class_attributes(class_def):
-            self.indexes['CLASS_ATTRIBUTE_INDEX'][attr].add(class_def)
-
-    def register_function(self, func_def):
-        self.indexes['FUNCTION_INDEX'][func_def.qname] = func_def
-        for param_def in func_def.parameters:
-            self.indexes['PARAMETER_INDEX'][param_def.qname] = param_def
-
-    def register_module(self, module_def):
-        self.indexes['MODULE_INDEX'][module_def.qname] = module_def
-
     def register(self, definition):
         if isinstance(definition, ClassDef):
-            self.register_class(definition)
+            self.analyzer.register_class(definition)
         elif isinstance(definition, FunctionDef):
-            self.register_function(definition)
+            self.analyzer.register_function(definition)
         raise TypeError('Unknown definition: {}'.format(definition))
-
-    def collect_class_attributes(self, class_def):
-        return class_def.attributes
 
     def qualified_name(self, node):
         node_name = ast_utils.node_name(node)
@@ -969,7 +967,7 @@ class SourceModuleIndexer(ast.NodeVisitor):
                             Import(imported_name, alias.asname or alias.name, True, False))
         module_name = self.analyzer.path_to_module_name(self.module_path)
         module_def = ModuleDef(module_name, node, self.module_path, imports)
-        self.register_module(module_def)
+        self.analyzer.register_module(module_def)
         return module_def
 
     def class_discovered(self, node):
@@ -999,7 +997,7 @@ class SourceModuleIndexer(ast.NodeVisitor):
 
         class_attributes = ClassAttributeCollector().collect(node)
         class_def = ClassDef(class_name, node, self.module_def, bases_names, class_attributes)
-        self.register_class(class_def)
+        self.analyzer.register_class(class_def)
         return class_def
 
     def function_discovered(self, node):
@@ -1035,9 +1033,11 @@ class SourceModuleIndexer(ast.NodeVisitor):
                     continue
             else:
                 param_name = arg.arg
+
             attributes = SimpleAttributesCollector(param_name).collect(node.body)
             param_qname = func_name + '.' + param_name
             param = ParameterDef(param_qname, attributes, None, self.module_def)
+
             collector = UsagesCollector(param_name)
             collector.collect(node.body)
             param.used_as_argument = collector.used_as_argument
@@ -1047,7 +1047,7 @@ class SourceModuleIndexer(ast.NodeVisitor):
             parameters.append(param)
 
         func_def = FunctionDef(func_name, node, self.module_def, parameters)
-        self.register_function(func_def)
+        self.analyzer.register_function(func_def)
         return func_def
 
 
