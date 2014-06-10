@@ -161,7 +161,7 @@ def fetch_projects(args):
     print('Projects found:\n  {}'.format('\n  '.join(projects)))
 
     if not os.path.exists(projects_directory):
-        print('Project directory does not exists. Creating one at {!r}.'.format(projects_directory))
+        print('Project directory does not exists. Creating one at "{}".'.format(projects_directory))
         os.makedirs(projects_directory)
 
     with cd(projects_directory):
@@ -172,18 +172,18 @@ def fetch_projects(args):
 def collect_statistics(args):
     try:
         projects_directory = os.path.abspath(os.path.expanduser(args.directory))
-        print('Running analysis in batch mode. Scanning directory {!r}.'.format(projects_directory))
+        print('Running analysis in batch mode. Scanning directory "{}".'.format(projects_directory))
 
         reports_root = os.path.join(projects_directory, '.reports')
         if not os.path.exists(reports_root):
             print('Reports directory does not exists yet. '
-                  'Creating one at {!r}.'.format(reports_root))
+                  'Creating one at "{}".'.format(reports_root))
             os.makedirs(reports_root)
 
         venv_root = os.path.join(projects_directory, '.venv')
         if not os.path.exists(venv_root):
             print('Virtual environments directory does not exists yet. '
-                  'Creating one at {!r}.'.format(venv_root))
+                  'Creating one at "{}".'.format(venv_root))
             os.makedirs(venv_root)
 
         project_reports = []
@@ -200,7 +200,7 @@ def collect_statistics(args):
                     try:
                         venv_path = os.path.join(venv_root, 'env-' + project_name)
                         if not os.path.exists(venv_path):
-                            print('Creating virtualenv in {!r}.'.format(venv_path))
+                            print('Creating virtualenv in "{}".'.format(venv_path))
                             run(VENV2_BIN, venv_path)
 
                         venv_python = os.path.join(venv_path, BIN_DIR, 'python')

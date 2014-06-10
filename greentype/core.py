@@ -175,12 +175,12 @@ class GreenTypeAnalyzer(object):
         elif os.path.isdir(target_path):
             project_root = target_path
         else:
-            raise ValueError('Unrecognized target {!r}. '
+            raise ValueError('Unrecognized target "{}". '
                              'Should be either file or directory.'.format(target_path))
         self.config['PROJECT_ROOT'] = project_root
         self.config['PROJECT_NAME'] = os.path.basename(target_path)
 
-        LOG.info('Source roots %r.', self.source_roots)
+        LOG.info('Source roots: %s', self.source_roots)
         self._broken_modules = set()
         self.statistics = defaultdict(StatisticUnit)
 
@@ -271,12 +271,12 @@ class GreenTypeAnalyzer(object):
 
 
     def index_project(self):
-        self.report('Indexing project {!r} starting from {!r}.'.format(self.project_root,
+        self.report('Indexing project "{}" starting from "{}".'.format(self.project_root,
                                                                        self.target_path))
-        LOG.debug('Python path: %r', sys.path)
+        LOG.debug('Python path: %s', sys.path)
         if os.path.isfile(self.target_path):
             if not utils.is_python_source_module(self.target_path):
-                raise ValueError('Not a valid Python module {!r} '
+                raise ValueError('Not a valid Python module "{}" '
                                  '(should end with .py).'.format(self.target_path))
             self.index_module(path=self.target_path)
         elif os.path.isdir(self.target_path):
@@ -284,7 +284,7 @@ class GreenTypeAnalyzer(object):
                 for name in dirnames[:]:
                     abs_path = os.path.abspath(os.path.join(dirpath, name))
                     if name in EXCLUDED_DIRECTORIES:
-                        LOG.debug('Excluded directory: %r. Skipping.', abs_path)
+                        LOG.debug('Excluded directory "%s". Skipping.', abs_path)
                         dirnames.remove(name)
                 for name in filenames:
                     abs_path = os.path.abspath(os.path.join(dirpath, name))
@@ -305,14 +305,14 @@ class GreenTypeAnalyzer(object):
             try:
                 name = self.path_to_module_name(path)
             except ValueError:
-                LOG.warning('Module %r is unreachable from sources roots.', path)
+                LOG.warning('Module "%s" is unreachable from sources roots', path)
                 self._broken_modules.add(path)
                 return None
         else:
             try:
                 path = self.module_name_to_path(name)
             except ValueError:
-                LOG.warning('Module %r is not found under source roots.', name)
+                LOG.warning('Module %s is not found under source roots', name)
                 self._broken_modules.add(name)
                 return None
 
@@ -321,13 +321,13 @@ class GreenTypeAnalyzer(object):
             return loaded
 
         if self.is_excluded(path):
-            LOG.debug('File %r is explicitly excluded from project.', path)
+            LOG.debug('File "%s" is explicitly excluded from project', path)
             return None
 
         try:
             module_indexed = SourceModuleIndexer(self, path).run()
         except SyntaxError as e:
-            self.report_error('Syntax error during indexing of {!r}. '
+            self.report_error('Syntax error during indexing of "{}". '
                               'Wrong Python version?'.format(path))
             LOG.error(traceback.format_exc())
             self._broken_modules.add(path)
@@ -370,7 +370,7 @@ class GreenTypeAnalyzer(object):
                 # critical on Windows: foo.bar.py and foo.Bar.py are the same module
                 prepared = os.path.normcase(prepared)
                 return prepared.replace(os.path.sep, '.').strip('.')
-        raise ValueError('Unresolved module: path={!r}'.format(path))
+        raise ValueError('Unresolved module: path="{}"'.format(path))
 
 
     def module_name_to_path(self, module_name):
@@ -391,7 +391,7 @@ class GreenTypeAnalyzer(object):
                    for dir in utils.parent_directories(path, src_root)):
                 return path
 
-        raise ValueError('Unresolved module: name={!r}'.format(module_name))
+        raise ValueError('Unresolved module: name="{}"'.format(module_name))
 
 
     def index_builtins(self):
@@ -399,7 +399,7 @@ class GreenTypeAnalyzer(object):
             return obj.__name__ if PY2 else obj.__qualname__
 
         for module_name in self.config['BUILTINS']:
-            LOG.debug('Reflectively analyzing %r', module_name)
+            LOG.debug('Reflectively analyzing %s', module_name)
 
             module = importlib.import_module(module_name, None)
             for module_attr_module_name, module_attr in vars(module).items():
@@ -465,8 +465,8 @@ class GreenTypeAnalyzer(object):
                             df = self.resolve_name(top_level_name, module_loaded, type)
                             if df:
                                 return df
-                            LOG.info('Module %r referenced as "import %s" in %r loaded '
-                                     'successfully, but class %r not found',
+                            LOG.info('Module %s referenced as "import %s" in "%s" loaded '
+                                     'successfully, but definition of %s not found',
                                      imp.imported_name, imp.imported_name, module.path, qname)
                     else:
                         # first, interpret import like 'from module import Name'
@@ -484,8 +484,8 @@ class GreenTypeAnalyzer(object):
                             df = self.resolve_name(top_level_name, module_loaded, type)
                             if df:
                                 return df
-                            LOG.info('Module %r referenced as "from %s import %s" in %r loaded '
-                                     'successfully, but class %r not found',
+                            LOG.info('Module %s referenced as "from %s import %s" in "%s" loaded '
+                                     'successfully, but definition of %s not found',
                                      imp.imported_name, utils.qname_tail(imp.imported_name),
                                      utils.qname_head(imp.imported_name), module.path,
                                      qname)
@@ -498,11 +498,12 @@ class GreenTypeAnalyzer(object):
                         if df:
                             return df
 
-        LOG.warning('Cannot resolve name %r in module %r', name, module or '<undefined>')
+        LOG.warning('Cannot resolve name %s in module "%s"', name,
+                    module.path if module else '<undefined>')
 
     @memoized
     def _resolve_bases(self, class_def):
-        LOG.debug('Resolving bases for %r', class_def.qname)
+        LOG.debug('Resolving bases for %s', class_def.qname)
         bases = set()
 
         for name in class_def.bases:
@@ -515,7 +516,7 @@ class GreenTypeAnalyzer(object):
                 bases.add(base_def)
                 bases.update(self._resolve_bases(base_def))
             else:
-                LOG.warning('Base class %r of %r not found', name, class_def.qname)
+                LOG.warning('Base class %s of %s not found', name, class_def.qname)
         return bases
 
     def infer_parameter_types(self):
@@ -576,7 +577,7 @@ class GreenTypeAnalyzer(object):
         for parent_dir in utils.parent_directories(self.target_path, strict=False):
             config_path = os.path.join(parent_dir, CONFIG_NAME)
             if os.path.exists(config_path):
-                LOG.info('Found config file at %r.', config_path)
+                LOG.info('Found config file at "%s".', config_path)
                 self.config.update_from_cfg_file(config_path)
                 self.config['PROJECT_ROOT'] = os.path.dirname(config_path)
                 break
@@ -724,7 +725,7 @@ class ModuleDef(Definition):
         self.imports = imports
 
     def __str__(self):
-        return 'module {} at {!r}'.format(self.qname, self.path)
+        return 'module {} at "{}"'.format(self.qname, self.path)
 
 
 class Import(object):
@@ -785,7 +786,7 @@ class ParameterDef(Definition):
     def __str__(self):
         s = '{}::{}'.format(self.qname, StructuralType(self.attributes))
         if self.suggested_types:
-            s = '{} ~ {}'.format(s, self.suggested_types)
+            s = '{} ~ {}'.format(s, ' | '.join(cls.qname for cls in self.suggested_types))
         return s
 
 
@@ -896,7 +897,7 @@ class SourceModuleIndexer(ast.NodeVisitor):
         return node_name
 
     def run(self):
-        LOG.debug('Indexing module %r', self.module_path)
+        LOG.debug('Indexing module "%s"', self.module_path)
         # let ast deal with encoding by itself
         with open(self.module_path, mode='br') as f:
             self.root = ast.parse(f.read(), self.module_path)
@@ -963,7 +964,7 @@ class SourceModuleIndexer(ast.NodeVisitor):
                     target_module = package
                 else:
                     raise Exception('Malformed ImportFrom statement: '
-                                    'file={!r} module={}, level={}'.format(self.module_path,
+                                    'file="{}" module={}, level={}'.format(self.module_path,
                                                                            child.module,
                                                                            child.level))
                 for alias in child.names:
@@ -1345,7 +1346,7 @@ class StatisticsReport(object):
         return self.format_text()
 
     def __repr__(self):
-        return 'Statistic(project={!r})'.format(self.analyzer.project_root)
+        return 'Statistic(project="{}")'.format(self.analyzer.project_root)
 
     def _format_list(self, items, header=None, prefix_func=None, indentation='  '):
         formatted = '\n'
