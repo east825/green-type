@@ -639,7 +639,7 @@ class GreenTypeAnalyzer(object):
                             dest='verbose_level',
                             help='Enable verbose output.')
 
-        parser.add_argument('-o', '--output', type=argparse.FileType(mode='w'), default='-',
+        parser.add_argument('-o', '--output', type=argparse.FileType(mode='w'), default=str('-'),
                             help='File, where to write report.')
 
         # TODO: detect piping
