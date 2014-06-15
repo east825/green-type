@@ -180,7 +180,6 @@ class GreenTypeAnalyzer(object):
         self.config['PROJECT_ROOT'] = project_root
         self.config['PROJECT_NAME'] = os.path.basename(target_path)
 
-        LOG.info('Source roots: %s', self.source_roots)
         self._broken_modules = set()
         self.statistics = defaultdict(StatisticUnit)
 
@@ -277,6 +276,8 @@ class GreenTypeAnalyzer(object):
     def index_project(self):
         self.report('Indexing project "{}" starting from "{}".'.format(self.project_root,
                                                                        self.target_path))
+        self.report('Source roots: {}.'.format(', '.join(self.source_roots)), verbose=True)
+
         LOG.debug('Python path: %s', sys.path)
         if os.path.isfile(self.target_path):
             if not utils.is_python_source_module(self.target_path):
@@ -330,7 +331,7 @@ class GreenTypeAnalyzer(object):
 
         try:
             module_indexed = SourceModuleIndexer(self, path).run()
-        except SyntaxError as e:
+        except SyntaxError:
             self.report_error('Syntax error during indexing of "{}". '
                               'Wrong Python version?'.format(path))
             LOG.error(traceback.format_exc())
@@ -461,7 +462,7 @@ class GreenTypeAnalyzer(object):
 
                     if not imp.import_from:
                         module_loaded = self.index_module(name=imp.imported_name)
-                        if module_loaded:
+                        if module_loaded and module_loaded is not module:
                             # drop local name (alias) for imports like
                             # import module as alias
                             # print(alias.MyClass.InnerClass())
@@ -476,14 +477,14 @@ class GreenTypeAnalyzer(object):
                         # first, interpret import like 'from module import Name'
                         module_name = utils.qname_tail(imp.imported_name)
                         module_loaded = self.index_module(name=module_name)
-                        if module_loaded and not module_loaded is module:
+                        if module_loaded and module_loaded is not module:
                             top_level_name = utils.qname_drop(qname, module_name)
                             df = self.resolve_name(top_level_name, module_loaded, type)
                             if df:
                                 return df
                         # then, as 'from package import module'
                         module_loaded = self.index_module(name=imp.imported_name)
-                        if module_loaded and not module_loaded is module:
+                        if module_loaded and module_loaded is not module:
                             top_level_name = utils.qname_drop(name, imp.local_name)
                             df = self.resolve_name(top_level_name, module_loaded, type)
                             if df:
@@ -495,7 +496,7 @@ class GreenTypeAnalyzer(object):
                                      qname)
                 elif imp.star_import:
                     module_loaded = self.index_module(name=imp.imported_name)
-                    if module_loaded:
+                    if module_loaded and module_loaded is not module:
                         # no aliased allowed with 'from module import *' so we check directly
                         # for name searched in the first place
                         df = self.resolve_name(name, module_loaded, type)
@@ -581,7 +582,7 @@ class GreenTypeAnalyzer(object):
         for parent_dir in utils.parent_directories(self.target_path, strict=False):
             config_path = os.path.join(parent_dir, CONFIG_NAME)
             if os.path.exists(config_path):
-                LOG.info('Found config file at "%s".', config_path)
+                self.report('Found config file at "{}".'.format(config_path), verbose=True)
                 self.config.update_from_cfg_file(config_path)
                 self.config['PROJECT_ROOT'] = os.path.dirname(config_path)
                 break
@@ -666,6 +667,7 @@ class GreenTypeAnalyzer(object):
         args.VERBOSE = args.verbose_level > 0
 
         analyzer = cls(os.path.abspath(os.path.expanduser(args.path)))
+        analyzer.config['VERBOSE'] = args.VERBOSE
         analyzer.discover_project_config()
         analyzer.config.update_from_object(args)
 
