@@ -184,6 +184,10 @@ class GreenTypeAnalyzer(object):
         self._broken_modules = set()
         self.statistics = defaultdict(StatisticUnit)
 
+        self.statistics['total_project_expressions'] = 0
+        self.statistics['total_project_parameter_refs'] = 0
+        self.statistics['total_project_parameters'] = 0
+
 
     def statistics_report(self):
         return StatisticsReport(self)
@@ -860,7 +864,8 @@ class UsagesCollector(AttributesCollector):
 
     def visit_Name(self, node):
         parent = ast_utils.node_parent(node)
-        if not isinstance(parent, (ast.Attribute, ast.Subscript)):
+        if not isinstance(parent, (ast.Attribute, ast.Subscript)) \
+                and not isinstance(node.ctx, (ast.Store, ast.Del, ast.Param)):
             if node.id == self.name:
                 self.used_directly += 1
                 # keywords lhs is identifier (raw str) and lhs is value
@@ -908,6 +913,19 @@ class SourceModuleIndexer(ast.NodeVisitor):
     def visit(self, node):
         self.depth += 1
         try:
+            if isinstance(node, ast.expr) and self.analyzer.is_inside_project(self.module_path):
+                if not hasattr(node, 'ctx'):
+                    self.analyzer.statistics['total_project_expressions'] += 1
+
+                elif not isinstance(node.ctx, (ast.Store, ast.Del, ast.Param)):
+                    self.analyzer.statistics['total_project_expressions'] += 1
+                    if isinstance(node, ast.Name):
+                        for definition in reversed(self.scopes_stack):
+                            if isinstance(definition, FunctionDef) and node.id in \
+                                    {p.name for p in definition.parameters}:
+                                self.analyzer.statistics['total_project_parameter_refs'] += 1
+                                break
+
             super(SourceModuleIndexer, self).visit(node)
         finally:
             self.depth -= 1
@@ -1018,20 +1036,24 @@ class SourceModuleIndexer(ast.NodeVisitor):
     def function_discovered(self, node):
         func_name = self.qualified_name(node)
         args = node.args
-        parent_scope = self.parent_scope()
 
-        decorators = [ast_utils.attributes_chain_to_name(d) for d in node.decorator_list]
-        if isinstance(parent_scope, ClassDef) and \
-                not ('staticmethod' in decorators or 'classmethod' in decorators):
+        if isinstance(self.parent_scope(), ClassDef) and \
+                not ast_utils.decorated_with(node, 'staticmethod'):
             declared_params = args.args[1:]
         else:
-            declared_params = args.args
+            declared_params = args.args[:]
+        # Python += update lists inplace
+        declared_params += [args.vararg, args.kwarg]
 
-        if PY2:
-            # exact order doesn't matter here
-            declared_params += [args.vararg] + [args.kwarg]
-        else:
-            declared_params += [args.vararg] + args.kwonlyargs + [args.kwarg]
+        # TODO: filter out parameter patterns in Python 2?
+        total_parameters = len(args.args) + bool(args.vararg) + bool(args.kwarg)
+
+        if not PY2:
+            declared_params += args.kwonlyargs
+            total_parameters += len(args.kwonlyargs)
+
+        if self.analyzer.is_inside_project(self.module_path):
+            self.analyzer.statistics['total_project_parameters'] += total_parameters
 
         parameters = []
         for arg in declared_params:
@@ -1203,8 +1225,8 @@ class StatisticsReport(object):
                         sample_items=self.most_types_parameters(sample_size)
                     )
                 },
-                'additional': {name: unit.as_dict() for name, unit in
-                               self.analyzer.statistics.items()}
+                'additional': {name: unit.as_dict() if isinstance(unit, StatisticUnit) else unit
+                               for name, unit in self.analyzer.statistics.items()}
             }
         }
 

@@ -20,9 +20,9 @@ def test_self_filtering(analyzer):
     assert 'self_filtering.MyClass.method.helper.self' in index
     assert 'self_filtering.MyClass.method.helper.x' in index
 
-    # first parameter is included however if method is annotated with
-    # for @classmethod or @staticmethod (but no aliasing check yet)
-    assert 'self_filtering.MyClass.class_method.self' in index
+    # first parameter is included however if method is not
+    # annotated with for @staticmethod (but no aliasing check yet)
+    assert 'self_filtering.MyClass.class_method.self' not in index
     assert 'self_filtering.MyClass.class_method.x' in index
 
     assert 'self_filtering.MyClass.static_method.self' in index

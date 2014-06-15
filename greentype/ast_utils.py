@@ -5,6 +5,15 @@ import collections
 from greentype.utils import is_collection
 
 
+def decorated_with(node, name):
+    if not isinstance(node, (ast.ClassDef, ast.FunctionDef)):
+        raise ValueError('Illegal node type "{}". Should be either class '
+                         'or function definition.'.format(type(node).__name__))
+
+    decorators = [attributes_chain_to_name(d) for d in node.decorator_list]
+    return name in decorators
+
+
 def attributes_chain_to_name(node):
     parts = []
     while isinstance(node, ast.Attribute):
