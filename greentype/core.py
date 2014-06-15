@@ -472,14 +472,14 @@ class GreenTypeAnalyzer(object):
                         # first, interpret import like 'from module import Name'
                         module_name = utils.qname_tail(imp.imported_name)
                         module_loaded = self.index_module(name=module_name)
-                        if module_loaded:
+                        if module_loaded and not module_loaded is module:
                             top_level_name = utils.qname_drop(qname, module_name)
                             df = self.resolve_name(top_level_name, module_loaded, type)
                             if df:
                                 return df
                         # then, as 'from package import module'
                         module_loaded = self.index_module(name=imp.imported_name)
-                        if module_loaded:
+                        if module_loaded and not module_loaded is module:
                             top_level_name = utils.qname_drop(name, imp.local_name)
                             df = self.resolve_name(top_level_name, module_loaded, type)
                             if df:
