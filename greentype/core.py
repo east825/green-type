@@ -330,7 +330,7 @@ class GreenTypeAnalyzer(object):
             return None
 
         try:
-            module_indexed = SourceModuleIndexer(self, path).run()
+            module_indexed = SourceModuleIndexer(self, path, name).run()
         except SyntaxError:
             self.report_error('Syntax error during indexing of "{}". '
                               'Wrong Python version?'.format(path))
@@ -880,10 +880,16 @@ class UsagesCollector(AttributesCollector):
 
 
 class SourceModuleIndexer(ast.NodeVisitor):
-    def __init__(self, analyzer, path):
+    def __init__(self, analyzer, path, name=None):
         self.analyzer = analyzer
         self.indexes = analyzer.indexes
         self.module_path = os.path.abspath(path)
+
+        if name is None:
+            self.module_name = analyzer.path_to_module_name(path)
+        else:
+            self.module_name = name
+
         self.scopes_stack = []
         self.module_def = None
         self.depth = 0
@@ -994,8 +1000,7 @@ class SourceModuleIndexer(ast.NodeVisitor):
                         imported_name = '{}.{}'.format(target_module, alias.name)
                         imports.append(
                             Import(imported_name, alias.asname or alias.name, True, False))
-        module_name = self.analyzer.path_to_module_name(self.module_path)
-        module_def = ModuleDef(module_name, node, self.module_path, imports)
+        module_def = ModuleDef(self.module_name, node, self.module_path, imports)
         self.analyzer.register_module(module_def)
         return module_def
 
