@@ -1,4 +1,5 @@
 from conftest import *
+import conftest
 
 from greentype.compat import BUILTINS_NAME
 
@@ -80,10 +81,32 @@ def test_path_to_module(analyzer):
         assert m2 is None
 
 
+# leads to infinite recursion
 def test_same_name_bases_skipped(analyzer):
     analyzer.index_module('same_name_bases.py')
     cls = analyzer.indexes['CLASS_INDEX']['same_name_bases.A']
     assert analyzer._resolve_bases(cls) == set()
+
+# Simple broken recursive import.
+@pytest.mark.xfail
+def test_recursive_resolve1():
+    analyzer = conftest.TestAnalyzer('recursive_resolve/project1')
+    analyzer.index_project()
+    main_module = analyzer.indexes['MODULE_INDEX']['main']
+    assert analyzer.resolve_name('Class', main_module) is None
+
+# More complex case found in headphones project.
+# See "from musicbrainzngs import compat" line in headphones/lib/musicbrainzngs/musicbrainz.py.
+@pytest.mark.xfail
+def test_recursive_resolve2():
+    analyzer = conftest.TestAnalyzer('recursive_resolve/project2')
+    # module package.sibling is not yet indexed!
+    analyzer.config['FOLLOW_IMPORTS'] = False
+    # analyzer.index_project()
+    module = analyzer.index_module(name='package.module')
+    class_def = analyzer.resolve_name('sibling.Class', module)
+    assert class_def is not None
+    assert class_def.module.path == os.path.abspath('recursive_resolve/project2/package/sibling.py')
 
 
 def test_resolve_stdlib(analyzer):

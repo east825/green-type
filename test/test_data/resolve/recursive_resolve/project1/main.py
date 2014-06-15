@@ -1,0 +1,1 @@
+from sibling import Class
