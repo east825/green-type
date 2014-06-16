@@ -1,5 +1,5 @@
 from __future__ import division
-import pytest
+from greentype.compat import PY2
 
 TEST_DATA_DIR = 'statistics'
 
@@ -48,7 +48,7 @@ def test_dict_report_format(analyzer):
     assert report["indexed"] == {
         "total": {
             "functions": 2,
-            "classes": 2,
+            "classes": 3 if PY2 else 2, # + PY2_FAKE_OBJECT
             "modules": 1,
             "parameters": 5
         },

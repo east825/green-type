@@ -88,7 +88,6 @@ def test_same_name_bases_skipped(analyzer):
     assert analyzer._resolve_bases(cls) == set()
 
 # Simple broken recursive import.
-@pytest.mark.xfail
 def test_recursive_resolve1():
     analyzer = conftest.TestAnalyzer('recursive_resolve/project1')
     analyzer.index_project()
@@ -97,7 +96,6 @@ def test_recursive_resolve1():
 
 # More complex case found in headphones project.
 # See "from musicbrainzngs import compat" line in headphones/lib/musicbrainzngs/musicbrainz.py.
-@pytest.mark.xfail
 def test_recursive_resolve2():
     analyzer = conftest.TestAnalyzer('recursive_resolve/project2')
     # module package.sibling is not yet indexed!

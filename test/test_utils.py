@@ -66,6 +66,15 @@ def test_memoized():
     func(2)
     assert func.called == 4
 
+def test_recursion_guard():
+    @utils.recursion_guard(42)
+    def func(recursive):
+        if recursive:
+            return func(recursive)
+        return 21
+
+    assert func(True) == 42
+    assert func(False) == 21
 
 
 def test_timed(capsys):

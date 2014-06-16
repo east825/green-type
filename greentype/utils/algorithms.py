@@ -26,6 +26,25 @@ def memoized(f):
     return wrapper
 
 
+def recursion_guard(value):
+    def decorator(f):
+        computing = set()
+
+        @functools.wraps(f)
+        def wrapper(*args):
+            if args in computing:
+                return value
+            computing.add(args)
+            try:
+                return f(*args)
+            finally:
+                computing.discard(args)
+
+        return wrapper
+
+    return decorator
+
+
 def dict_merge(d1, d2, add_new=True, override=False, override_none=False, silent=False):
     # TODO: cycles detection
     copy = d1.copy()
