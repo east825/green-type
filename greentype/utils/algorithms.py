@@ -12,37 +12,27 @@ class _Missing(object):
 MISSING = _Missing()
 
 
-def memoized(f):
+def memoized(f=None, guard_value=MISSING):
     results = {}
+
+    if f is None:
+        return functools.partial(memoized, guard_value=guard_value)
 
     @functools.wraps(f)
     def wrapper(*args):
         r = results.get(args, MISSING)
         if r is MISSING:
-            r = results[args] = f(*args)
+            results[args] = guard_value
+            try:
+                r = f(*args)
+            finally:
+                results[args] = r
+
         return r
 
     wrapper.clear_results = results.clear
     return wrapper
 
-
-def recursion_guard(value):
-    def decorator(f):
-        computing = set()
-
-        @functools.wraps(f)
-        def wrapper(*args):
-            if args in computing:
-                return value
-            computing.add(args)
-            try:
-                return f(*args)
-            finally:
-                computing.discard(args)
-
-        return wrapper
-
-    return decorator
 
 
 def dict_merge(d1, d2, add_new=True, override=False, override_none=False, silent=False):

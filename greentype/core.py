@@ -19,7 +19,7 @@ from . import utils
 import timeit
 import traceback
 import itertools
-from .utils import memoized, MISSING, recursion_guard
+from .utils import memoized, MISSING
 from .compat import PY2, BUILTINS_NAME, indent, open
 
 
@@ -415,8 +415,7 @@ class GreenTypeAnalyzer(object):
                     attributes = set(vars(cls))
                     self.register_class(ClassDef(class_name, None, None, bases, attributes))
 
-    @memoized
-    @recursion_guard(None)
+    @memoized(guard_value=None)
     def resolve_name(self, name, module, type='class'):
         """Resolve name using indexes and following import if it's necessary."""
 

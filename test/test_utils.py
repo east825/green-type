@@ -66,15 +66,27 @@ def test_memoized():
     func(2)
     assert func.called == 4
 
-def test_recursion_guard():
-    @utils.recursion_guard(42)
-    def func(recursive):
-        if recursive:
-            return func(recursive)
-        return 21
+    @utils.memoized(guard_value=None)
+    def func():
+        return func()
 
-    assert func(True) == 42
-    assert func(False) == 21
+    assert func() is None
+
+    # if function fails, guard value should be removed from cache
+    _fail = True
+    @utils.memoized(guard_value=10)
+    def func():
+        func()
+        if _fail:
+            raise RuntimeError()
+        return func() + func()
+
+    with pytest.raises(RuntimeError):
+        func()
+
+    _fail = False
+    assert func() == 20
+
 
 
 def test_timed(capsys):
