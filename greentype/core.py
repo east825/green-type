@@ -526,9 +526,8 @@ class GreenTypeAnalyzer(object):
 
     def infer_parameter_types(self):
         for param in self.project_parameters:
-            if param.attributes:
-                param.suggested_types = self.suggest_classes(param.attributes)
-                # self._resolve_bases.clear_results()
+            param.suggested_types = self.suggest_classes(param.attributes)
+            # self._resolve_bases.clear_results()
 
 
     def suggest_classes(self, accessed_attrs):
@@ -571,7 +570,7 @@ class GreenTypeAnalyzer(object):
 
         self.statistics['total_candidates'].add(total, list(accessed_attrs))
 
-        # remove subclasses if their superclasses is suitable also
+        # remove subclasses if their superclasses are suitable also
         for cls in suitable.copy():
             if any(base in suitable for base in self._resolve_bases(cls)):
                 suitable.remove(cls)
@@ -679,7 +678,7 @@ class GreenTypeAnalyzer(object):
         start = timeit.default_timer()
         analyzer.infer_parameter_types()
         analyzer.report('Inferred types for parameters in '
-                        '{:.2f}'.format(timeit.default_timer() - start))
+                        '{:.5f}'.format(timeit.default_timer() - start))
 
         statistics = analyzer.statistics_report()
         LOG.info('Writing report to "%s"', args.output.name)
@@ -1274,15 +1273,19 @@ class StatisticsReport(object):
                     dump_functions=False, dump_params=False):
         d = self.as_dict(with_samples, samples_size)
         formatted = '\nTotal indexed: ' \
+                    '{} modules, ' \
                     '{} classes, ' \
                     '{} functions with {} parameters'.format(
+            d['indexed']['total']['modules'],
             d['indexed']['total']['classes'],
             d['indexed']['total']['functions'],
             d['indexed']['total']['parameters'])
 
         formatted += '\nIn project: ' \
+                     '{} modules, ' \
                      '{} classes, ' \
                      '{} functions with {} parameters'.format(
+            d['indexed']['in_project']['modules'],
             d['indexed']['in_project']['classes'],
             d['indexed']['in_project']['functions'],
             d['indexed']['in_project']['parameters'])
