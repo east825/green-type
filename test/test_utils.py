@@ -89,35 +89,22 @@ def test_memoized():
 
 
 
-def test_timed(capsys):
-    # use case #1: decorator with custom message
-    @utils.timed_function(msg='msg #1')
-    def func(n):
-        time.sleep(n)
+def test_timer():
+    assert utils.timer().elapsed == 0
 
-    func(0.1)
-    assert capsys.readouterr()[0] == 'msg #1: 0.10s\n'
-
-    # use case #2: decorator with standard message
-    @utils.timed_function
-    def func(n):
-        time.sleep(n)
-
-    func(0.1)
-    assert capsys.readouterr()[0] == 'Total: 0.10s\n'
-
-    # use case #3: pass both header and function
-    utils.timed_function(time.sleep, 'msg #3')(0.1)
-    assert capsys.readouterr()[0] == 'msg #3: 0.10s\n'
-
-    # use case #4: context manager
-    with utils.timed(msg='msg #4'):
+    with utils.timer() as t:
         time.sleep(0.1)
-    assert capsys.readouterr()[0] == 'msg #4: 0.10s\n'
+        t.stop()
+        time.sleep(0.2)
+        t.start()
+        time.sleep(0.3)
 
-    # use case #5: supplied callable and arguments
-    utils.timed('msg #5', time.sleep, (0.1,))
-    assert capsys.readouterr()[0] == 'msg #5: 0.10s\n'
+    assert abs(t.elapsed - 0.4) < 0.05
+
+    with pytest.raises(Exception):
+        t = utils.timer()
+        t.stop()
+
 
 
 def test_parent_directories(tmpdir):

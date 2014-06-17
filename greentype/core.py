@@ -526,8 +526,13 @@ class GreenTypeAnalyzer(object):
 
     def infer_parameter_types(self):
         for param in self.project_parameters:
-            param.suggested_types = self.suggest_classes(param.attributes)
+            if param.attributes:
+                with utils.timer() as t:
+                    param.suggested_types = self.suggest_classes(param.attributes)
+
+                self.statistics['one_parameter_time'].add(t.elapsed, list(param.attributes))
             # self._resolve_bases.clear_results()
+            # self.resolve_name.clear_results()
 
 
     def suggest_classes(self, accessed_attrs):
@@ -673,12 +678,14 @@ class GreenTypeAnalyzer(object):
         if analyzer.config['ANALYZE_BUILTINS']:
             analyzer.index_builtins()
 
-        analyzer.index_project()
+        with utils.timer() as t:
+            analyzer.index_project()
+        analyzer.report('Built indexes in {:.5f} s.'.format(t.elapsed))
 
-        start = timeit.default_timer()
-        analyzer.infer_parameter_types()
-        analyzer.report('Inferred types for parameters in '
-                        '{:.5f}'.format(timeit.default_timer() - start))
+
+        with utils.timer() as t:
+            analyzer.infer_parameter_types()
+        analyzer.report('Inferred types for parameters in {:.5f} s.'.format(t.elapsed))
 
         statistics = analyzer.statistics_report()
         LOG.info('Writing report to "%s"', args.output.name)
@@ -1364,7 +1371,7 @@ class StatisticsReport(object):
                            param.used_as_argument,
                            param.used_as_operand,
                            param.returned)))
-            formatted += self._format_list(header='Parameters', items=chunks)
+            formatted += self._format_list(header='Parameters:', items=chunks)
 
         formatted += self._format_list(
             header='Additional statistics:',

@@ -29,34 +29,28 @@ def method_decorator(decorator):
     return new_decorator
 
 
-def timed(msg=None, func=None, args=None, kwargs=None):
-    class Timer(object):
-        def __enter__(self):
-            self.start = timeit.default_timer()
-            return self
+class _Timer(object):
+    def __init__(self):
+        self.elapsed = 0
+        self.start_time = 0
 
-        def __exit__(self, exc_type, exc_val, exc_tb):
-            elapsed = timeit.default_timer() - self.start
-            print('{}: {:.2f}s'.format(msg or 'Total', elapsed))
+    def __enter__(self):
+        self.start()
+        return self
 
-    if func is not None:
-        with Timer():
-            func(*(args or ()), **(kwargs or {}))
-    else:
-        return Timer()
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.stop()
 
+    def start(self):
+        self.start_time = timeit.default_timer()
 
-def timed_function(func=None, msg=None):
-    if func is None and msg:
-        return functools.partial(timed_function, msg=msg)
-    if func:
-        def wrapper(*args, **kwargs):
-            with timed(msg):
-                return func(*args, **kwargs)
+    def stop(self):
+        if self.start_time == 0:
+            raise Exception('Timer was not started')
+        self.elapsed += timeit.default_timer() - self.start_time
+        self.start_time = 0
 
-        return wrapper
-    raise ValueError('Either function or header should be specified')
-
+timer = _Timer
 
 @contextlib.contextmanager
 def suppress_exceptions():
