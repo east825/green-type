@@ -784,7 +784,7 @@ class ParameterDef(Definition):
         self.attributes = attributes
         self.suggested_types = set()
         self.used_as_argument = 0
-        self.used_directly = 0
+        self.used = 0
         self.used_as_operand = 0
         self.returned = 0
 
@@ -859,23 +859,21 @@ class UsagesCollector(AttributesCollector):
     def collect(self, node):
         self.used_as_argument = 0
         self.used_as_operand = 0
-        self.used_directly = 0
+        self.used = 0
         self.returned = 0
         self.visit(node)
 
     def visit_Name(self, node):
-        parent = ast_utils.node_parent(node)
-        if not isinstance(parent, (ast.Attribute, ast.Subscript)) \
-                and not isinstance(node.ctx, (ast.Store, ast.Del, ast.Param)):
-            if node.id == self.name:
-                self.used_directly += 1
-                # keywords lhs is identifier (raw str) and lhs is value
-                if isinstance(parent, (ast.keyword, ast.Call)):
-                    self.used_as_argument += 1
-                if isinstance(parent, ast.Return):
-                    self.returned += 1
-                if isinstance(parent, (ast.BinOp, ast.UnaryOp)):
-                    self.used_as_operand += 1
+        if node.id == self.name and not isinstance(node.ctx, (ast.Store, ast.Del, ast.Param)):
+            self.used += 1
+            # keywords lhs is identifier (raw str) and lhs is value
+            parent = ast_utils.node_parent(node)
+            if isinstance(parent, (ast.keyword, ast.Call)):
+                self.used_as_argument += 1
+            if isinstance(parent, ast.Return):
+                self.returned += 1
+            if isinstance(parent, (ast.BinOp, ast.UnaryOp)):
+                self.used_as_operand += 1
 
 
 class SourceModuleIndexer(ast.NodeVisitor):
@@ -1085,7 +1083,7 @@ class SourceModuleIndexer(ast.NodeVisitor):
             collector.collect(node.body)
             param.used_as_argument = collector.used_as_argument
             param.used_as_operand = collector.used_as_operand
-            param.used_directly = collector.used_directly
+            param.used = collector.used
             param.returned = collector.returned
             parameters.append(param)
 
@@ -1137,7 +1135,7 @@ class StatisticsReport(object):
         """Parameters that has no attributes and which values not
         used directly in function.
         """
-        return [p for p in self.attributeless_parameters if not p.used_directly]
+        return [p for p in self.project_parameters if not p.used]
 
     def most_attributes_parameters(self, n):
         return heapq.nlargest(n, self.project_parameters, key=lambda x: len(x.attributes))
@@ -1357,12 +1355,12 @@ class StatisticsReport(object):
             for param in sorted(parameters, key=operator.attrgetter('qname')):
                 chunks.append(textwrap.dedent("""\
                 Parameter {}:
-                - used directly: {:d} times
+                - used: {:d} times
                 - passed to other function: {:d} times
                 - used in arithmetic and logical expressions {:d} times
                 - returned: {:d} times
                 """.format(param,
-                           param.used_directly,
+                           param.used,
                            param.used_as_argument,
                            param.used_as_operand,
                            param.returned)))
